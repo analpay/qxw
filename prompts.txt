@@ -1,0 +1,23 @@
+我需要做一个命令行工具集合，架构设计如下：
+1. 项目的根目录包含逻辑代码目录和文档目录
+1.1 每个命令都包含有对应help功能
+2. qxw 目录下是后端代码的目录，
+2.1.1 整个项目的数据结构体，要求使用pandantic实体类进行强类型约束
+2.1.2 要求使用TUI实现各个命令，可以使用textual这个框架
+2.1.3 要求每个命令的help信息标记完整
+2.2 qxw/bin 目录下是各个命令的入口,每个功能都是一个独立的命令，并且注意命名不要和linux/macos常用命令冲突
+2.3 qxw/config 目录存放各种配置集合，
+2.4 qxw/libaray 目录中存放各种逻辑代码
+2.5.1 qxw/libaray/base 目录用于存放基础的依赖服务、apikit的封装等等
+2.5.2 qxw/libaray/domain 目录用于存放领域驱动层，分为：command/phrase/step三层
+2.5.3 qxw/libaray/models 目录放orm映射层，使用sqlalchemy框架
+2.5.3 qxw/libaray/managers 目录放orm映射层，
+2.5.4 qxw/libaray/services 目录放业务逻辑代码
+3. 文档目录在docs下，
+3.1 文档目录在 docs目录中，包括规划、开发手册、使用手册、运维手册、FAQ部分、quick start 文档
+4. 其他要求
+4.1 后端代码添加错误处理机制，
+4.2 在CLAUDE.md中标注清楚：每次改动代码都要改相应的文档
+4.3 创建README.md，里面包括项目简单说明和快速开始的命令
+4.4 在CLAUDE.md中说明要求项目是中文
+4.5 要创建gitignore文件，包括前后端的内容
