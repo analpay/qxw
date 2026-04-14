@@ -41,10 +41,10 @@ QXW 使用 `QXW_` 前缀的环境变量进行配置：
 |----------|--------|------|
 | `QXW_APP_NAME` | qxw | 应用名称 |
 | `QXW_DEBUG` | false | 是否开启调试模式 |
-| `QXW_DB_URL` | sqlite:///qxw.db | 数据库连接地址 |
+| `QXW_DB_URL` | sqlite:///$HOME/.config/qxw/qxw.db | 数据库连接地址 |
 | `QXW_LOG_LEVEL` | INFO | 日志级别 (DEBUG/INFO/WARNING/ERROR) |
-| `QXW_LOG_DIR` | ~/.qxw/logs | 日志文件目录 |
-| `QXW_CONFIG_DIR` | ~/.qxw | 配置文件目录 |
+| `QXW_LOG_DIR` | ~/.config/qxw/logs | 日志文件目录 |
+| `QXW_CONFIG_DIR` | ~/.config/qxw | 配置文件目录 |
 
 ### .env 文件
 
@@ -60,9 +60,9 @@ QXW_DB_URL=sqlite:///data/qxw.db
 
 | 路径 | 说明 |
 |------|------|
-| `~/.qxw/` | 用户配置目录 |
-| `~/.qxw/logs/` | 日志文件目录 |
-| `qxw.db` | SQLite 数据库文件（默认位置） |
+| `~/.config/qxw/` | 用户配置目录 |
+| `~/.config/qxw/logs/` | 日志文件目录 |
+| `~/.config/qxw/qxw.db` | SQLite 数据库文件（默认位置） |
 
 ## 日志
 
@@ -81,7 +81,7 @@ export QXW_LOG_LEVEL=DEBUG
 
 ## 数据库
 
-默认使用 SQLite，数据库文件位于当前目录的 `qxw.db`。
+默认使用 SQLite，数据库文件位于 `~/.config/qxw/qxw.db`。
 
 可通过环境变量修改：
 
@@ -93,5 +93,5 @@ export QXW_DB_URL="sqlite:///path/to/custom.db"
 
 1. **命令未找到**: 确认已通过 `pipx install .` 或 `pip install -e .`（虚拟环境内）安装
 2. **pipx 安装后命令不可用**: 执行 `pipx ensurepath` 并重启终端
-3. **权限错误**: 检查 `~/.qxw/` 目录权限
+3. **权限错误**: 检查 `~/.config/qxw/` 目录权限
 4. **数据库错误**: 检查 `QXW_DB_URL` 配置是否正确

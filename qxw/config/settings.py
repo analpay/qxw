@@ -20,20 +20,20 @@ class AppSettings(BaseSettings):
 
     # 数据库配置
     db_url: str = Field(
-        default="sqlite:///qxw.db",
+        default=f"sqlite:///{Path.home() / '.config' / 'qxw' / 'qxw.db'}",
         description="数据库连接地址",
     )
 
     # 日志配置
     log_level: str = Field(default="INFO", description="日志级别")
     log_dir: Path = Field(
-        default=Path.home() / ".qxw" / "logs",
+        default=Path.home() / ".config" / "qxw" / "logs",
         description="日志目录",
     )
 
     # 配置文件目录
     config_dir: Path = Field(
-        default=Path.home() / ".qxw",
+        default=Path.home() / ".config" / "qxw",
         description="配置文件目录",
     )
 
