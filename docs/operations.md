@@ -4,15 +4,30 @@
 
 ## 安装部署
 
-### 生产环境安装
+### 全局安装（推荐）
+
+使用 pipx 安装，命令全局可用，自动隔离依赖，无需手动激活虚拟环境：
 
 ```bash
-pip install .
+# 安装 pipx（如未安装）
+brew install pipx    # macOS
+# 或 pip install pipx
+
+# 全局安装
+pipx install .
+
+# 更新（代码改动后重新安装）
+pipx install . --force
+
+# 卸载
+pipx uninstall qxw
 ```
 
 ### 开发环境安装
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
@@ -76,6 +91,7 @@ export QXW_DB_URL="sqlite:///path/to/custom.db"
 
 ## 故障排查
 
-1. **命令未找到**: 确认已执行 `pip install -e .`
-2. **权限错误**: 检查 `~/.qxw/` 目录权限
-3. **数据库错误**: 检查 `QXW_DB_URL` 配置是否正确
+1. **命令未找到**: 确认已通过 `pipx install .` 或 `pip install -e .`（虚拟环境内）安装
+2. **pipx 安装后命令不可用**: 执行 `pipx ensurepath` 并重启终端
+3. **权限错误**: 检查 `~/.qxw/` 目录权限
+4. **数据库错误**: 检查 `QXW_DB_URL` 配置是否正确

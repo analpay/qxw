@@ -16,13 +16,31 @@ QXW 是一个通用开发命令行工具集合，采用 Python 开发，提供 T
 
 - Python >= 3.10
 - pip
+- pipx（推荐，用于全局安装）
 
 ### 安装
 
+#### 方式一：pipx 全局安装（推荐）
+
+使用 pipx 安装后命令全局可用，无需手动激活虚拟环境：
+
 ```bash
-# 克隆项目
-git clone <仓库地址>
-cd qxw
+# 安装 pipx（如未安装）
+brew install pipx    # macOS
+# 或 pip install pipx
+
+# 全局安装
+pipx install .
+
+# 更新（代码改动后重新安装）
+pipx install . --force
+```
+
+#### 方式二：虚拟环境开发模式
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 
 # 安装（开发模式）
 pip install -e .
