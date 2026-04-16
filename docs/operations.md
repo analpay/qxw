@@ -56,11 +56,43 @@ QXW_LOG_LEVEL=DEBUG
 QXW_DB_URL=sqlite:///data/qxw.db
 ```
 
+### 配置文件 (setting.json)
+
+QXW 支持从 `~/.config/qxw/setting.json` 读取配置，首次运行命令时会自动基于内置模板生成。也可以手动创建，参考 `qxw/config/setting.json.example`：
+
+```json
+{
+    "app_name": "qxw",
+    "app_version": "0.1.0",
+    "debug": false,
+    "db_url": "sqlite:///~/.config/qxw/qxw.db",
+    "log_level": "INFO",
+    "log_dir": "~/.config/qxw/logs",
+    "config_dir": "~/.config/qxw"
+}
+```
+
+配置优先级（从高到低）：环境变量 > .env 文件 > setting.json > 代码默认值。
+
+## 环境初始化
+
+首次运行 `qxw-hello` 时会自动检测并初始化运行环境，包括：
+
+| 初始化项 | 路径 | 说明 |
+|----------|------|------|
+| 配置目录 | `~/.config/qxw/` | 所有配置和数据的根目录 |
+| 配置文件 | `~/.config/qxw/setting.json` | 基于内置模板自动生成 |
+| 日志目录 | `~/.config/qxw/logs/` | 日志文件存放目录 |
+| 数据库 | `~/.config/qxw/qxw.db` | SQLite 数据库文件 |
+
+如需重新初始化，删除 `~/.config/qxw/` 目录后重新运行命令即可。
+
 ## 目录说明
 
 | 路径 | 说明 |
 |------|------|
 | `~/.config/qxw/` | 用户配置目录 |
+| `~/.config/qxw/setting.json` | JSON 配置文件 |
 | `~/.config/qxw/logs/` | 日志文件目录 |
 | `~/.config/qxw/qxw.db` | SQLite 数据库文件（默认位置） |
 

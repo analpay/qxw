@@ -150,6 +150,9 @@ def main(name: str, tui: bool) -> None:
         qxw-hello --tui        # TUI 交互模式
     """
     try:
+        # 检测并初始化运行环境
+        _ensure_env()
+
         config = HelloConfig(name=name, tui_mode=tui)
         logger.info("启动 qxw-hello 命令, name=%s, tui=%s", name, config.tui_mode)
 
@@ -172,6 +175,21 @@ def main(name: str, tui: bool) -> None:
         logger.exception("未预期的错误")
         click.echo(f"未预期的错误: {e}", err=True)
         sys.exit(1)
+
+
+def _ensure_env() -> None:
+    """检测运行环境，未初始化时自动执行初始化"""
+    from qxw.config.init import check_env, init_env
+
+    status = check_env()
+    if status.all_ready:
+        return
+
+    click.echo("检测到运行环境未完成初始化，正在自动初始化...")
+    result = init_env()
+    for item in result.initialized_items:
+        click.echo(f"  已初始化: {item}")
+    click.echo("环境初始化完成\n")
 
 
 if __name__ == "__main__":

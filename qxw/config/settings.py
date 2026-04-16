@@ -53,9 +53,12 @@ class AppSettings(BaseSettings):
             try:
                 with open(json_config_path, "r", encoding="utf-8") as f:
                     json_config = json.load(f)
+                # 获取字段类型注解，自动进行 Path 类型转换
+                field_types = self.model_fields
                 for key, value in json_config.items():
-                    if hasattr(self, key):
-                        if key == "log_dir":
+                    if key in field_types:
+                        annotation = field_types[key].annotation
+                        if annotation is Path and isinstance(value, str):
                             setattr(self, key, Path(value))
                         else:
                             setattr(self, key, value)
