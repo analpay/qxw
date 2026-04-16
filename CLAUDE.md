@@ -13,7 +13,7 @@
 
 具体要求：
 1. 新增命令：更新 `docs/user-guide.md`（使用手册）和 `docs/quick-start.md`（快速开始）
-2. 修改配置：更新 `docs/operations.md`（运维手册）
+2. 修改配置：更新 `docs/operations.md`（运维手册），同时更新 `qxw/config/setting.json.example`
 3. 修改 API/接口：更新 `docs/development.md`（开发手册）
 4. 修复问题：如果是常见问题，更新 `docs/faq.md`
 5. 新增功能规划：更新 `docs/planning.md`（规划文档）

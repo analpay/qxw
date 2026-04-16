@@ -1,0 +1,9 @@
+{
+    "app_name": "qxw",
+    "app_version": "0.1.0",
+    "debug": false,
+    "db_url": "sqlite:///${HOME}/.config/qxw/qxw.db",
+    "log_level": "INFO",
+    "log_dir": "${HOME}/.config/qxw/logs",
+    "config_dir": "${HOME}/.config/qxw"
+}
