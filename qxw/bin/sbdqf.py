@@ -113,7 +113,7 @@ def _run_single_pass(
     return False
 
 
-def _run_animation(stdscr: curses.window, rounds: int, duration: int) -> None:
+def _run_animation(stdscr: curses.window, rounds: int | None, duration: int | None) -> None:
     """运行老鼠穿越动画"""
     curses.curs_set(0)
     stdscr.nodelay(True)
@@ -131,12 +131,15 @@ def _run_animation(stdscr: curses.window, rounds: int, duration: int) -> None:
         if max_y < mouse_height:
             return
 
-        deadline = time.monotonic() + duration
+        deadline = time.monotonic() + duration if duration else float("inf")
+        max_rounds = rounds if rounds else (1 if not duration else None)
+        completed = 0
 
-        for _ in range(rounds):
+        while max_rounds is None or completed < max_rounds:
             timed_out = _run_single_pass(stdscr, frames, mouse_width, mouse_height, deadline)
             if timed_out:
                 break
+            completed += 1
 
     finally:
         signal.signal(signal.SIGINT, original_sigint)
@@ -157,9 +160,9 @@ def _run_animation(stdscr: curses.window, rounds: int, duration: int) -> None:
     prog_name="qxw-sbdqf",
     message="%(prog)s 版本 %(version)s",
 )
-@click.option("-r", "--rounds", default=1, show_default=True, type=click.IntRange(min=1), help="老鼠跑过屏幕的轮次")
-@click.option("-d", "--duration", default=600, show_default=True, type=click.IntRange(min=1), help="动画最长持续时间（秒）")
-def main(rounds: int, duration: int) -> None:
+@click.option("-r", "--rounds", default=None, type=click.IntRange(min=1), help="老鼠跑过屏幕的轮次（不填则不限轮次）")
+@click.option("-d", "--duration", default=None, type=click.IntRange(min=1), help="动画最长持续时间/秒（不填则不限时间）")
+def main(rounds: int | None, duration: int | None) -> None:
     """老鼠穿越动画命令
 
     一只大老鼠从屏幕右边飞速跑到左边，模仿经典的 sl 命令效果。
