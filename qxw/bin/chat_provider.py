@@ -641,5 +641,83 @@ def set_default_provider(name: str) -> None:
         sys.exit(e.exit_code)
 
 
+def _ping_one(provider) -> tuple[bool, str]:
+    import time
+
+    from qxw.library.services.chat_service import ChatParams, ChatService, ChatSession
+
+    params = ChatParams(
+        model=provider.model,
+        temperature=provider.temperature,
+        max_tokens=1,
+        top_p=provider.top_p,
+    )
+    service = ChatService()
+    session = ChatSession(provider=provider, params=params)
+
+    try:
+        start = time.perf_counter()
+        for _ in service.stream_chat(session, "ping"):
+            pass
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        return True, f"✓ 连接正常 ({elapsed_ms:.0f}ms)"
+    except QxwError as e:
+        return False, f"✗ 连接失败: {e.message}"
+
+
+@main.command(name="ping", help="测试提供商连接是否正常（向模型发送最小请求）")
+@click.argument("name", required=False, default=None)
+def ping_provider(name: str | None) -> None:
+    try:
+        if name:
+            provider = manager.get_by_name(name)
+            if not provider:
+                click.echo(f"提供商 '{name}' 不存在", err=True)
+                sys.exit(1)
+        else:
+            provider = manager.get_default()
+            if not provider:
+                click.echo("未指定提供商且未设置默认提供商，请指定名称或先设置默认提供商。", err=True)
+                sys.exit(1)
+
+        click.echo(f"正在测试 {provider.name} ({provider.provider_type} / {provider.model}) ...")
+        ok, msg = _ping_one(provider)
+        click.echo(msg)
+        if not ok:
+            sys.exit(1)
+
+    except QxwError as e:
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+
+
+@main.command(name="ping-all", help="测试所有已配置的提供商连接")
+def ping_all_providers() -> None:
+    try:
+        providers = manager.list_all()
+        if not providers:
+            click.echo("暂无已配置的提供商，使用 qxw-chat-provider add 添加。")
+            return
+
+        failed = 0
+        for provider in providers:
+            label = f"{provider.name} ({provider.provider_type} / {provider.model})"
+            click.echo(f"  {label} ... ", nl=False)
+            ok, msg = _ping_one(provider)
+            click.echo(msg)
+            if not ok:
+                failed += 1
+
+        total = len(providers)
+        passed = total - failed
+        click.echo(f"\n共 {total} 个提供商，{passed} 个正常，{failed} 个失败")
+        if failed:
+            sys.exit(1)
+
+    except QxwError as e:
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+
+
 if __name__ == "__main__":
     main()

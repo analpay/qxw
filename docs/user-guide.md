@@ -6,10 +6,45 @@
 
 | 命令 | 说明 | 状态 |
 |------|------|------|
+| `qxw` | 列出所有可用命令 | ✅ 可用 |
 | `qxw-hello` | 示例命令，验证安装 | ✅ 可用 |
 | `qxw-sbdqf` | 老鼠穿越动画（致敬 sl 命令） | ✅ 可用 |
 | `qxw-chat` | AI 对话工具 | ✅ 可用 |
 | `qxw-chat-provider` | AI 对话提供商管理 | ✅ 可用 |
+
+## qxw
+
+列出 QXW 工具集提供的所有命令。从已安装包的元数据中动态读取命令列表，以表格形式展示。
+
+### 基本用法
+
+```bash
+qxw
+```
+
+### 参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `--version` | 显示版本号 |
+| `--help` | 显示帮助信息 |
+
+### 输出示例
+
+```
+       QXW 命令列表 (v0.1.0)
+┌───────────────────┬──────────────────────┐
+│ 命令              │ 说明                  │
+├───────────────────┼──────────────────────┤
+│ qxw               │ 列出所有可用命令       │
+│ qxw-hello         │ QXW 工具集示例命令     │
+│ qxw-sbdqf         │ 🐭 老鼠穿越动画       │
+│ qxw-chat          │ 🤖 AI 对话工具        │
+│ qxw-chat-provider │ AI 对话提供商管理      │
+└───────────────────┴──────────────────────┘
+
+共 5 个命令，使用 <命令> --help 查看详细用法。
+```
 
 ## qxw-hello
 
@@ -145,6 +180,15 @@ qxw-chat-provider set-default my-claude
 
 # 删除提供商
 qxw-chat-provider delete my-openai
+
+# 测试提供商连接（使用默认提供商）
+qxw-chat-provider ping
+
+# 测试指定提供商连接
+qxw-chat-provider ping my-openai
+
+# 测试所有提供商连接
+qxw-chat-provider ping-all
 ```
 
 ### 子命令说明
@@ -157,6 +201,8 @@ qxw-chat-provider delete my-openai
 | `edit <name>` | 编辑提供商配置 |
 | `delete <name>` | 删除提供商（支持 `-y` 跳过确认） |
 | `set-default <name>` | 将指定提供商设为默认 |
+| `ping [name]` | 测试提供商连接是否正常（不指定则使用默认提供商） |
+| `ping-all` | 测试所有已配置的提供商连接 |
 
 ### add 参数说明
 

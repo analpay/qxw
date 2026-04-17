@@ -72,7 +72,12 @@ qxw-sbdqf
 
 如果看到 "你好, 世界！" 的输出，说明安装成功。
 
-## 4. 查看帮助
+## 4. 查看所有命令
+
+```bash
+# 列出所有可用命令
+qxw
+```
 
 每个命令都支持 `--help` 参数：
 
@@ -91,6 +96,9 @@ qxw-chat-provider add \
   --api-key sk-your-key \
   --model gpt-4o \
   --default
+
+# 验证连接是否正常
+qxw-chat-provider ping
 
 # 开始交互式对话
 qxw-chat
