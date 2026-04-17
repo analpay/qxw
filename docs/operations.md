@@ -4,16 +4,37 @@
 
 ## 安装部署
 
-### 全局安装（推荐）
+### 一键安装（推荐）
+
+项目提供了自动安装脚本 `install.sh`，会自动检测环境并安装所有依赖：
+
+```bash
+bash install.sh
+```
+
+脚本支持以下选项：
+
+| 选项 | 说明 |
+|------|------|
+| `--dev` | 开发模式安装（虚拟环境 + dev 依赖） |
+| `--force` | 强制重装（覆盖已有安装） |
+| `--gitbook` | 同时安装 gitbook PDF 导出依赖（weasyprint） |
+| `--uninstall` | 卸载 qxw |
+| `--help` | 显示帮助信息 |
+
+脚本自动完成：
+1. 检测操作系统和包管理器（macOS Homebrew / Ubuntu apt / CentOS dnf/yum / Arch pacman / Alpine apk / openSUSE zypper）
+2. 安装 Python >= 3.10（如缺失，macOS 会先安装 Homebrew）
+3. 安装 pip（如缺失）
+4. 安装 pipx（如缺失）
+5. 通过 pipx 全局安装 qxw
+6. 验证所有命令是否可用
+
+### 手动全局安装
 
 使用 pipx 安装，命令全局可用，自动隔离依赖，无需手动激活虚拟环境：
 
 ```bash
-# 安装 pipx（如未安装）
-brew install pipx    # macOS
-# 或 pip install pipx
-
-# 全局安装
 pipx install .
 
 # 更新（代码改动后重新安装）
@@ -23,7 +44,7 @@ pipx install . --force
 pipx uninstall qxw
 ```
 
-### 开发环境安装
+### 手动开发环境安装
 
 ```bash
 python3 -m venv .venv

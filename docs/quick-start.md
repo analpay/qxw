@@ -2,27 +2,42 @@
 
 本文档帮助你在 5 分钟内完成 QXW 工具集的安装和首次使用。
 
-## 1. 环境准备
-
-确保你的系统满足以下要求：
-
-- Python >= 3.10
-- pipx（推荐）或 pip 包管理器
+## 1. 一键安装（推荐）
 
 ```bash
-# 检查 Python 版本
-python3 --version
-
-# 安装 pipx（如未安装）
-brew install pipx    # macOS
-# 或 pip install pipx
+git clone <仓库地址>
+cd qxw
+bash install.sh
 ```
 
-## 2. 安装
+脚本会自动完成以下工作：
+
+- 检测操作系统和包管理器（macOS / Ubuntu / CentOS / Arch 等）
+- 安装 Python >= 3.10（如缺失）
+- 安装 pipx（如缺失）
+- 通过 pipx 全局安装 qxw 工具集
+- 验证所有命令是否可用
+
+更多选项：
+
+```bash
+bash install.sh --dev        # 开发模式（虚拟环境 + dev 依赖）
+bash install.sh --force      # 强制重装
+bash install.sh --gitbook    # 同时安装 gitbook PDF 导出依赖
+bash install.sh --uninstall  # 卸载 qxw
+bash install.sh --help       # 查看帮助
+```
+
+## 2. 手动安装
+
+如果你更习惯手动操作，也可以按以下步骤进行。
+
+### 环境要求
+
+- Python >= 3.10
+- pipx（推荐）或 pip
 
 ### 方式一：pipx 全局安装（推荐）
-
-使用 pipx 安装后命令全局可用，无需手动激活虚拟环境：
 
 ```bash
 git clone <仓库地址>
