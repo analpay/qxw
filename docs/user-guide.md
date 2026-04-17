@@ -305,6 +305,7 @@ qxw-gitbook serve -p 3000 -d docs/
 |--------|------|
 | `pdf` | 将目录下的 Markdown 文件批量转换为 PDF |
 | `serve` | 启动本地 HTTP 服务预览 Markdown 文件 |
+| `summary` | 为目录生成 SUMMARY.md 和 INDEX.md 目录文件 |
 
 ### pdf 参数说明
 
@@ -321,3 +322,31 @@ qxw-gitbook serve -p 3000 -d docs/
 | `--dir` | `-d` | `.` | Markdown 文件所在目录 |
 | `--port` | `-p` | 8000 | 服务端口 |
 | `--host` | `-H` | 127.0.0.1 | 监听地址 |
+
+### summary 用法
+
+扫描目录结构，为每个包含 `README.md` 的目录自动生成：
+
+- **SUMMARY.md**：标题 + 目录结构
+- **INDEX.md**：README.md 内容 + 目录结构
+
+```bash
+# 为当前目录生成
+qxw-gitbook summary
+
+# 指定目录和深度
+qxw-gitbook summary -d docs/ --depth 5
+```
+
+### summary 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | 文档根目录 |
+| `--depth` | - | 3 | 目录层级深度 |
+
+### summary 特殊规则
+
+- 文件按数字前缀排序（如 `1.intro.md`、`2.setup.md`）
+- 标题含 `(todo)` 的文件/目录会被跳过
+- 目录下存在 `SUMMARY.md.skip` 文件时跳过该目录的生成

@@ -13,6 +13,7 @@ Markdown 文档工具：支持批量转换 PDF 和本地预览服务。
 import mimetypes
 import sys
 import urllib.parse
+from dataclasses import dataclass, field
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -215,6 +216,110 @@ def _convert_one_pdf(md_path: Path, output_dir: Path) -> Path:
     pdf_path = output_dir / f"{md_path.stem}.pdf"
     HTML(string=full_html, base_url=str(md_path.parent)).write_pdf(str(pdf_path))
     return pdf_path
+
+
+# ============================================================
+# Summary 生成（参考 flaboy/mmi parser.go）
+# ============================================================
+
+
+@dataclass
+class _DocNode:
+    title: str
+    filepath: Path
+    rel_parts: list[str]
+    is_page: bool
+    children: list["_DocNode"] = field(default_factory=list)
+
+
+def _numeric_sort_key(name: str) -> tuple[int, str]:
+    dot = name.find(".")
+    if dot > 0:
+        try:
+            return (int(name[:dot]), name)
+        except ValueError:
+            pass
+    return (0, name)
+
+
+_SUMMARY_EXCLUDED = {"readme.md", "summary.md", "index.md"}
+
+
+def _scan_dir(dirpath: Path, rel_parts: list[str] | None = None) -> _DocNode:
+    if rel_parts is None:
+        rel_parts = []
+
+    readme = dirpath / "README.md"
+    title = _extract_title(readme) if readme.is_file() else dirpath.name
+    node = _DocNode(title=title, filepath=dirpath, rel_parts=list(rel_parts), is_page=False)
+
+    entries = sorted(dirpath.iterdir(), key=lambda e: _numeric_sort_key(e.name))
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+
+        sub_parts = rel_parts + [entry.name]
+
+        if entry.is_dir():
+            sub_readme = entry / "README.md"
+            if sub_readme.is_file():
+                sub_title = _extract_title(sub_readme)
+                if "(todo)" not in sub_title:
+                    node.children.append(_scan_dir(entry, sub_parts))
+        elif entry.suffix == ".md" and entry.name.lower() not in _SUMMARY_EXCLUDED:
+            child_title = _extract_title(entry)
+            if "(todo)" not in child_title:
+                node.children.append(
+                    _DocNode(title=child_title, filepath=entry, rel_parts=sub_parts, is_page=True)
+                )
+
+    return node
+
+
+def _toc_markdown(node: _DocNode, depth: int, start_depth: int, prefix: str = "") -> str:
+    depth -= 1
+    if depth <= 0:
+        return ""
+
+    lines: list[str] = []
+    for child in node.children:
+        rel_path = "/".join(child.rel_parts[start_depth:])
+        if not child.is_page:
+            rel_path += "/INDEX.md"
+        lines.append(f"{prefix}1. [{child.title}]({rel_path})")
+        if not child.is_page:
+            sub = _toc_markdown(child, depth, start_depth, prefix + "    ")
+            if sub:
+                lines.append(sub)
+
+    return "\n".join(lines)
+
+
+def _generate_summary_files(node: _DocNode, depth: int, current_depth: int) -> list[str]:
+    generated: list[str] = []
+
+    if (node.filepath / "SUMMARY.md.skip").exists():
+        return generated
+
+    toc = _toc_markdown(node, depth, current_depth)
+
+    summary_path = node.filepath / "SUMMARY.md"
+    summary_path.write_text(f"{node.title}\n{'=' * 48}\n\n{toc}\n", encoding="utf-8")
+    generated.append(str(summary_path))
+
+    index_path = node.filepath / "INDEX.md"
+    readme_path = node.filepath / "README.md"
+    readme_content = readme_path.read_text(encoding="utf-8") if readme_path.is_file() else ""
+    index_path.write_text(f"{readme_content}\n## 目录\n\n{toc}\n", encoding="utf-8")
+    generated.append(str(index_path))
+
+    remaining = depth - 1
+    if remaining > 0:
+        for child in node.children:
+            if not child.is_page:
+                generated.extend(_generate_summary_files(child, remaining, current_depth + 1))
+
+    return generated
 
 
 # ============================================================
@@ -514,6 +619,59 @@ def serve_command(directory: str, port: int, host: str) -> None:
         sys.exit(e.exit_code)
     except KeyboardInterrupt:
         click.echo("\n服务已停止")
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="summary", help="为目录生成 SUMMARY.md 和 INDEX.md 目录文件")
+@click.option("--dir", "-d", "directory", default=".", show_default=True, help="文档根目录")
+@click.option("--depth", default=3, show_default=True, type=int, help="目录层级深度")
+def summary_command(directory: str, depth: int) -> None:
+    """扫描目录结构，为每个包含 README.md 的目录生成目录文件
+
+    \b
+    示例:
+        qxw-gitbook summary              # 为当前目录生成
+        qxw-gitbook summary -d docs/     # 指定目录
+        qxw-gitbook summary --depth 5    # 指定深度
+
+    \b
+    生成规则:
+        SUMMARY.md  = 标题 + 目录结构
+        INDEX.md    = README.md 内容 + 目录结构
+
+    \b
+    特殊处理:
+        - 标题含 (todo) 的条目会被跳过
+        - 存在 SUMMARY.md.skip 的目录会被跳过
+        - 文件按数字前缀排序（如 1.intro.md, 2.setup.md）
+    """
+    try:
+        base_dir = Path(directory).resolve()
+        if not base_dir.is_dir():
+            click.echo(f"错误: 目录不存在: {directory}", err=True)
+            sys.exit(1)
+
+        if not (base_dir / "README.md").is_file():
+            click.echo(f"错误: {directory} 下没有 README.md", err=True)
+            sys.exit(1)
+
+        tree = _scan_dir(base_dir)
+        generated = _generate_summary_files(tree, depth, 0)
+
+        for filepath in generated:
+            console.print(f"  [green]✓[/] {filepath}")
+        console.print(f"\n共生成 {len(generated)} 个文件")
+
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
     except Exception as e:
         logger.exception("未预期的错误")
         click.echo(f"未预期的错误: {e}", err=True)
