@@ -32,6 +32,7 @@ dev = [
 
 [project.scripts]
 qxw-hello = "qxw.bin.hello:main"
+qxw-sbdqf = "qxw.bin.sbdqf:main"
 
 [tool.setuptools.packages.find]
 include = ["qxw*"]
