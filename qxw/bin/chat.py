@@ -14,6 +14,7 @@ import sys
 
 import click
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 
 from qxw import __version__
@@ -93,20 +94,23 @@ def _run_interactive(session: ChatSession, service: ChatService) -> None:
 
         console.print()
         try:
-            for chunk in service.stream_chat(session, user_input):
-                console.print(chunk, end="", highlight=False)
-            console.print("\n")
+            full_response = ""
+            with Live(console=console, vertical_overflow="visible") as live:
+                for chunk in service.stream_chat(session, user_input):
+                    full_response += chunk
+                    live.update(Markdown(full_response))
+            console.print()
         except QxwError as e:
             console.print(f"\n[red]错误: {e.message}[/]\n")
 
 
 def _run_single(session: ChatSession, service: ChatService, message: str) -> None:
-    full_response = ""
     try:
-        for chunk in service.stream_chat(session, message):
-            full_response += chunk
-
-        console.print(Markdown(full_response))
+        full_response = ""
+        with Live(console=console, vertical_overflow="visible") as live:
+            for chunk in service.stream_chat(session, message):
+                full_response += chunk
+                live.update(Markdown(full_response))
     except QxwError as e:
         click.echo(f"错误: {e.message}", err=True)
         sys.exit(e.exit_code)
