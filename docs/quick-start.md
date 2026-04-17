@@ -117,7 +117,19 @@ qxw-gitbook serve
 qxw-gitbook pdf
 ```
 
-## 7. 下一步
+## 7. 开发者 Web 工具集
+
+```bash
+# 启动 Web 工具服务
+qxw-webtool
+
+# 指定端口
+qxw-webtool -p 3000
+```
+
+在浏览器中打开 http://127.0.0.1:9000 即可使用文本对比、JSON 格式化、时间戳转换、加解密、URL/Base64 编解码等工具。
+
+## 8. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

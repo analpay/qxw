@@ -75,6 +75,7 @@ qxw-hello --name 开发者
 | `qxw-chat` | 🤖 AI 对话工具，支持 OpenAI / Anthropic 提供商 |
 | `qxw-chat-provider` | ⚙️ AI 对话提供商管理（增删改查） |
 | `qxw-gitbook` | 📖 Markdown 文档工具（PDF 转换 / 本地预览） |
+| `qxw-webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
 
 ## 项目结构
 

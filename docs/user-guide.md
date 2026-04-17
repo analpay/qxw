@@ -12,6 +12,7 @@
 | `qxw-chat` | AI 对话工具 | ✅ 可用 |
 | `qxw-chat-provider` | AI 对话提供商管理 | ✅ 可用 |
 | `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
+| `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
 
 ## qxw
 
@@ -350,3 +351,73 @@ qxw-gitbook summary -d docs/ --depth 5
 - 文件按数字前缀排序（如 `1.intro.md`、`2.setup.md`）
 - 标题含 `(todo)` 的文件/目录会被跳过
 - 目录下存在 `SUMMARY.md.skip` 文件时跳过该目录的生成
+
+## qxw-webtool
+
+开发者常用 Web 工具集，启动一个本地 HTTP 服务，在浏览器中提供多种实用工具。
+
+### 基本用法
+
+```bash
+# 启动服务（默认 9000 端口）
+qxw-webtool
+
+# 指定端口
+qxw-webtool -p 3000
+
+# 允许局域网访问
+qxw-webtool -H 0.0.0.0
+```
+
+### 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--port` | `-p` | 9000 | 服务端口 |
+| `--host` | `-H` | 127.0.0.1 | 监听地址 |
+| `--version` | - | - | 显示版本号 |
+| `--help` | - | - | 显示帮助信息 |
+
+### 功能列表
+
+#### 文本对比
+
+两段文本的 Unified Diff 差异比较，高亮显示新增（绿色）和删除（红色）行。
+
+#### JSON 格式化
+
+- **格式化**：将 JSON 美化为缩进格式
+- **压缩**：将 JSON 压缩为单行
+- **校验**：检查 JSON 是否合法
+
+#### 时间戳转换
+
+- 实时显示当前 Unix 时间戳
+- Unix 时间戳（秒/毫秒）→ 日期时间
+- 日期时间 → Unix 时间戳
+- 支持格式：`YYYY-MM-DD HH:MM:SS`、`YYYY-MM-DD`、`YYYY/MM/DD` 等
+
+#### 加解密
+
+| 功能 | 算法 | 说明 |
+|------|------|------|
+| 哈希 | MD5 / SHA1 / SHA256 / SHA512 | 单向哈希计算 |
+| HMAC | HMAC-SHA256 / HMAC-SHA512 | 基于密钥的消息认证码 |
+| AES | AES-128/192/256（CBC / ECB） | 对称加密，PKCS7 填充，密钥为 Hex 格式 |
+| DES | DES（CBC） | 对称加密，8 字节 Hex 密钥 |
+| 3DES | 3DES（CBC） | 对称加密，16/24 字节 Hex 密钥 |
+| RSA | RSA-2048/4096（OAEP+SHA256） | 非对称加密，支持密钥对生成 |
+| Ed25519 | Ed25519 | 非对称签名，支持密钥对生成 / 签名 / 验证 |
+
+对称加密约定：
+- 密钥和 IV 使用 Hex 格式输入
+- 加密输出为 Base64（CBC 模式下 IV 前置于密文）
+- 解密输入为 Base64（自动提取前置的 IV）
+
+#### URL 编解码
+
+URL Encode / Decode 转换。
+
+#### Base64 编解码
+
+Base64 Encode / Decode 转换。
