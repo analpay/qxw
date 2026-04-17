@@ -231,8 +231,8 @@ def _build_sidebar(base_dir: Path, root_dir: Path, current_path: str) -> str:
         rel = str(f.relative_to(root_dir))
         href = "/" + urllib.parse.quote(rel)
         title = _extract_title(f)
-        active = " active" if rel == current_path else ""
-        parts.append(f'<li><a href="{href}" class="{active}">{title}</a></li>')
+        cls = ' class="active"' if rel == current_path else ""
+        parts.append(f'<li><a href="{href}"{cls}>{title}</a></li>')
 
     subdirs = sorted(
         d for d in base_dir.iterdir()
@@ -244,8 +244,8 @@ def _build_sidebar(base_dir: Path, root_dir: Path, current_path: str) -> str:
             dir_title = _extract_title(readme)
             rel = str(readme.relative_to(root_dir))
             href = "/" + urllib.parse.quote(rel)
-            active = " active" if rel == current_path else ""
-            title_html = f'<a href="{href}" class="nav-group-title{active}">{dir_title}</a>'
+            cls = "nav-group-title active" if rel == current_path else "nav-group-title"
+            title_html = f'<a href="{href}" class="{cls}">{dir_title}</a>'
         else:
             title_html = f'<span class="nav-group-title">{d.name}</span>'
 
