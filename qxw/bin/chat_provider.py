@@ -141,21 +141,29 @@ class ProviderFormScreen(ModalScreen[dict | None]):
 
     BINDINGS = [("escape", "cancel", "取消")]
 
-    def __init__(self, provider=None) -> None:
+    def __init__(self, provider=None, *, copy_from: str | None = None) -> None:
         super().__init__()
         self._provider = provider
-        self._is_edit = provider is not None
+        self._is_edit = provider is not None and copy_from is None
+        self._copy_from = copy_from
 
     def compose(self) -> ComposeResult:
         p = self._provider
-        title = f"编辑提供商: {p.name}" if self._is_edit else "添加提供商"
+        if self._is_edit:
+            title = f"编辑提供商: {p.name}"
+        elif self._copy_from:
+            title = f"复制提供商: {self._copy_from}"
+        else:
+            title = "添加提供商"
+
+        name_value = f"{self._copy_from}-copy" if self._copy_from else (p.name if p else "")
 
         with VerticalScroll(id="form-container"):
             yield Static(title, id="form-title")
 
             yield Label("名称", classes="form-label")
             yield Input(
-                value=p.name if p else "",
+                value=name_value,
                 placeholder="my-openai",
                 id="f-name",
                 disabled=self._is_edit,
@@ -285,6 +293,7 @@ class ChatProviderApp(App):
     BINDINGS = [
         ("a", "add_provider", "添加"),
         ("e", "edit_provider", "编辑"),
+        ("c", "copy_provider", "复制"),
         ("d", "delete_provider", "删除"),
         ("s", "set_default", "设为默认"),
         ("q", "quit", "退出"),
@@ -360,6 +369,16 @@ class ChatProviderApp(App):
             return
 
         self._refresh_table()
+
+    def action_copy_provider(self) -> None:
+        name = self._get_selected_name()
+        if not name:
+            return
+        provider = manager.get_by_name(name)
+        if not provider:
+            self.notify(f"提供商 '{name}' 不存在", severity="error")
+            return
+        self.push_screen(ProviderFormScreen(provider, copy_from=name), self._on_form_result)
 
     def action_delete_provider(self) -> None:
         name = self._get_selected_name()

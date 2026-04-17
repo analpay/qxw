@@ -75,15 +75,29 @@ class ChatService:
         for msg in session.messages:
             messages.append({"role": msg.role, "content": msg.content})
 
+        kwargs: dict[str, object] = {
+            "model": session.params.model,
+            "messages": messages,
+            "max_tokens": session.params.max_tokens,
+            "stream": True,
+        }
+        if session.params.temperature is not None:
+            kwargs["temperature"] = session.params.temperature
+        if session.params.top_p is not None:
+            kwargs["top_p"] = session.params.top_p
+
         try:
-            response = client.chat.completions.create(
-                model=session.params.model,
-                messages=messages,  # type: ignore[arg-type]
-                temperature=session.params.temperature,
-                max_tokens=session.params.max_tokens,
-                top_p=session.params.top_p,
-                stream=True,
-            )
+            try:
+                response = client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
+            except Exception as e:
+                # 部分模型（如 o1/o3）不支持 temperature/top_p，自动去除后重试
+                err = str(e)
+                if "temperature" in err or "top_p" in err:
+                    kwargs.pop("temperature", None)
+                    kwargs.pop("top_p", None)
+                    response = client.chat.completions.create(**kwargs)  # type: ignore[arg-type]
+                else:
+                    raise
 
             full_content = ""
             for chunk in response:
@@ -94,6 +108,8 @@ class ChatService:
 
             session.add_message("assistant", full_content)
 
+        except NetworkError:
+            raise
         except Exception as e:
             raise NetworkError(f"OpenAI API 调用失败: {e}") from e
 
