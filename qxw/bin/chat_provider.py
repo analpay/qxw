@@ -652,7 +652,7 @@ def _ping_one(provider) -> tuple[bool, str]:
         max_tokens=1,
         top_p=provider.top_p,
     )
-    service = ChatService()
+    service = ChatService(connect_timeout=60.0, timeout=600.0)
     session = ChatSession(provider=provider, params=params)
 
     try:

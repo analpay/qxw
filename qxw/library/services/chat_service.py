@@ -48,6 +48,13 @@ class ChatSession:
 
 class ChatService:
 
+    def __init__(self, *, connect_timeout: float | None = None, timeout: float | None = None) -> None:
+        self._httpx_timeout: object | None = None
+        if connect_timeout is not None or timeout is not None:
+            import httpx
+
+            self._httpx_timeout = httpx.Timeout(timeout, connect=connect_timeout)
+
     def stream_chat(self, session: ChatSession, user_input: str) -> Generator[str, None, None]:
         session.add_message("user", user_input)
 
@@ -64,10 +71,13 @@ class ChatService:
         except ImportError:
             raise NetworkError("请先安装 openai 依赖: pip install openai")
 
-        client = OpenAI(
-            api_key=session.provider.api_key,
-            base_url=session.provider.base_url,
-        )
+        client_kwargs: dict[str, object] = {
+            "api_key": session.provider.api_key,
+            "base_url": session.provider.base_url,
+        }
+        if self._httpx_timeout is not None:
+            client_kwargs["timeout"] = self._httpx_timeout
+        client = OpenAI(**client_kwargs)  # type: ignore[arg-type]
 
         messages: list[dict[str, str]] = []
         if session.params.system_prompt:
@@ -119,10 +129,13 @@ class ChatService:
         except ImportError:
             raise NetworkError("请先安装 anthropic 依赖: pip install anthropic")
 
-        client = anthropic.Anthropic(
-            api_key=session.provider.api_key,
-            base_url=session.provider.base_url,
-        )
+        client_kwargs: dict[str, object] = {
+            "api_key": session.provider.api_key,
+            "base_url": session.provider.base_url,
+        }
+        if self._httpx_timeout is not None:
+            client_kwargs["timeout"] = self._httpx_timeout
+        client = anthropic.Anthropic(**client_kwargs)  # type: ignore[arg-type]
 
         messages: list[dict[str, str]] = []
         for msg in session.messages:
