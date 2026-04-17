@@ -107,7 +107,17 @@ qxw-chat
 qxw-chat -m "你好"
 ```
 
-## 6. 下一步
+## 6. Markdown 文档工具
+
+```bash
+# 预览当前目录下的 Markdown 文件
+qxw-gitbook serve
+
+# 将 Markdown 文件转换为 PDF（需先安装 weasyprint）
+qxw-gitbook pdf
+```
+
+## 7. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

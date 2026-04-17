@@ -11,6 +11,7 @@
 | `qxw-sbdqf` | 老鼠穿越动画（致敬 sl 命令） | ✅ 可用 |
 | `qxw-chat` | AI 对话工具 | ✅ 可用 |
 | `qxw-chat-provider` | AI 对话提供商管理 | ✅ 可用 |
+| `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
 
 ## qxw
 
@@ -261,3 +262,62 @@ qxw-chat --system "你是一个 Python 专家"
 | `/exit` | 退出对话 |
 | `/clear` | 清空上下文（重新开始对话） |
 | `Ctrl+C` | 退出对话 |
+
+## qxw-gitbook
+
+Markdown 文档工具，支持将 Markdown 文件批量转换为 PDF，以及启动本地 HTTP 预览服务。
+
+### 安装 PDF 转换依赖
+
+`serve` 子命令开箱可用。`pdf` 子命令需要额外安装 `weasyprint`：
+
+```bash
+# macOS
+brew install pango
+pip install weasyprint
+
+# 或一步到位
+pip install "qxw[gitbook]"
+```
+
+### 基本用法
+
+```bash
+# 将当前目录下的 .md 文件转换为 PDF
+qxw-gitbook pdf
+
+# 递归处理子目录
+qxw-gitbook pdf -r
+
+# 指定源目录和输出目录
+qxw-gitbook pdf -d docs/ -o output/
+
+# 启动本地预览服务
+qxw-gitbook serve
+
+# 指定端口和目录
+qxw-gitbook serve -p 3000 -d docs/
+```
+
+### 子命令说明
+
+| 子命令 | 说明 |
+|--------|------|
+| `pdf` | 将目录下的 Markdown 文件批量转换为 PDF |
+| `serve` | 启动本地 HTTP 服务预览 Markdown 文件 |
+
+### pdf 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | Markdown 文件所在目录 |
+| `--output` | `-o` | (与源文件同目录) | PDF 输出目录 |
+| `--recursive` | `-r` | false | 递归处理子目录中的文件 |
+
+### serve 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | Markdown 文件所在目录 |
+| `--port` | `-p` | 8000 | 服务端口 |
+| `--host` | `-H` | 127.0.0.1 | 监听地址 |
