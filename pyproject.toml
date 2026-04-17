@@ -20,6 +20,8 @@ dependencies = [
     "textual>=0.40.0",
     "sqlalchemy>=2.0.0",
     "rich>=13.0.0",
+    "openai>=1.0.0",
+    "anthropic>=0.30.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +35,8 @@ dev = [
 [project.scripts]
 qxw-hello = "qxw.bin.hello:main"
 qxw-sbdqf = "qxw.bin.sbdqf:main"
+qxw-chat = "qxw.bin.chat:main"
+qxw-chat-provider = "qxw.bin.chat_provider:main"
 
 [tool.setuptools.packages.find]
 include = ["qxw*"]

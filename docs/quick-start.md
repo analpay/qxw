@@ -80,7 +80,26 @@ qxw-sbdqf
 qxw-hello --help
 ```
 
-## 5. 下一步
+## 5. AI 对话快速体验
+
+```bash
+# 添加一个 OpenAI 提供商
+qxw-chat-provider add \
+  --name my-openai \
+  --type openai \
+  --base-url https://api.openai.com/v1 \
+  --api-key sk-your-key \
+  --model gpt-4o \
+  --default
+
+# 开始交互式对话
+qxw-chat
+
+# 或发送单条消息
+qxw-chat -m "你好"
+```
+
+## 6. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

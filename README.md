@@ -71,6 +71,8 @@ qxw-hello --name 开发者
 |------|------|
 | `qxw-hello` | 示例命令，验证安装是否成功 |
 | `qxw-sbdqf` | 🐭 老鼠穿越动画，致敬经典 sl 命令 |
+| `qxw-chat` | 🤖 AI 对话工具，支持 OpenAI / Anthropic 提供商 |
+| `qxw-chat-provider` | ⚙️ AI 对话提供商管理（增删改查） |
 
 ## 项目结构
 
