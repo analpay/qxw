@@ -26,8 +26,6 @@ logger = get_logger("qxw.sbdqf")
 # 老鼠 ASCII 艺术 - 面朝左，从右向左穿过屏幕
 # ============================================================
 
-_BODY_LEN = 55
-
 # 两种尾巴波形，交替产生尾巴摆动效果
 _TAIL_PATTERNS = [
     "~" * 30,
@@ -38,48 +36,18 @@ _TAIL_PATTERNS = [
 def _build_frames() -> list[list[str]]:
     """构建老鼠动画帧
 
-    共 2 帧交替展示：
-    - 帧 0：腿直立 + 尾巴波形 A
-    - 帧 1：腿展开（奔跑中）+ 尾巴波形 B
+    共 2 帧交替展示，尾巴波形交替摆动。
     """
-    body = "_" * _BODY_LEN
-    space = " " * _BODY_LEN
-
-    # 头部：大耳朵 + 耳朵与头部连接（所有帧共用）
-    head = [
-        "              __",
-        "         _   /  \\",
-        "        / \\_/    \\_",
-    ]
-
-    # 帧 0 - 腿直立（着地姿态）
-    frame0_body = [
-        f"  = =  | @         \\{body}",
-        f"  = =   \\_    w    /{space}>{_TAIL_PATTERNS[0]}",
-        f"          |  | |  / {body}/",
-    ]
-    frame0_legs = [
-        "          |__| |_/",
-        "           || ||",
-        "           '' ''",
-    ]
-
-    # 帧 1 - 腿展开（奔跑姿态）
-    frame1_body = [
-        f"  = =  | @         \\{body}",
-        f"  = =   \\_    w    /{space}>{_TAIL_PATTERNS[1]}",
-        f"          |  | |  / {body}/",
-    ]
-    frame1_legs = [
-        "          |__|_|_/",
-        "          /|   |\\",
-        "         / '   ' \\",
-    ]
-
-    return [
-        head + frame0_body + frame0_legs,
-        head + frame1_body + frame1_legs,
-    ]
+    frames = []
+    for tail in _TAIL_PATTERNS:
+        body_col = len(tail) + 1
+        frame = [
+            f"{' ' * (body_col + 1)}____()()",
+            f"{' ' * body_col}/      @@",
+            f"`{tail}\\_;m__m._>o",
+        ]
+        frames.append(frame)
+    return frames
 
 
 # ============================================================
