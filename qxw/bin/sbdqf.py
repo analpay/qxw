@@ -40,11 +40,10 @@ def _build_frames() -> list[list[str]]:
     """
     frames = []
     for tail in _TAIL_PATTERNS:
-        body_col = len(tail) + 1
         frame = [
-            f"{' ' * (body_col + 1)}____()()",
-            f"{' ' * body_col}/      @@",
-            f"`{tail}\\_;m__m._>o",
+            "  ()()____",
+            "  @@      \\",
+            f"o<_.m__m;_/{tail}`",
         ]
         frames.append(frame)
     return frames
