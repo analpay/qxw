@@ -313,11 +313,9 @@ def _generate_summary_files(node: _DocNode, depth: int, current_depth: int) -> l
     index_path.write_text(f"{readme_content}\n## 目录\n\n{toc}\n", encoding="utf-8")
     generated.append(str(index_path))
 
-    remaining = depth - 1
-    if remaining > 0:
-        for child in node.children:
-            if not child.is_page:
-                generated.extend(_generate_summary_files(child, remaining, current_depth + 1))
+    for child in node.children:
+        if not child.is_page:
+            generated.extend(_generate_summary_files(child, depth, current_depth + 1))
 
     return generated
 
@@ -627,7 +625,7 @@ def serve_command(directory: str, port: int, host: str) -> None:
 
 @main.command(name="summary", help="为目录生成 SUMMARY.md 和 INDEX.md 目录文件")
 @click.option("--dir", "-d", "directory", default=".", show_default=True, help="文档根目录")
-@click.option("--depth", default=3, show_default=True, type=int, help="目录层级深度")
+@click.option("--depth", default=5, show_default=True, type=int, help="目录层级深度")
 def summary_command(directory: str, depth: int) -> None:
     """扫描目录结构，为每个包含 README.md 的目录生成目录文件
 
