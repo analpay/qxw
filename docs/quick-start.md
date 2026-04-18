@@ -144,7 +144,20 @@ qxw-webtool -p 3000
 
 在浏览器中打开 http://127.0.0.1:9000 即可使用文本对比、JSON 格式化、时间戳转换、加解密、URL/Base64 编解码等工具。
 
-## 8. 下一步
+## 8. 文件服务器
+
+```bash
+# 启动 HTTP 文件服务器，共享当前目录
+qxw-file-server http
+
+# 启动 FTP 文件服务器（需安装 pyftpdlib）
+pip install pyftpdlib
+qxw-file-server ftp
+```
+
+启动后终端会打印自动生成的用户名和密码，用浏览器访问 http://0.0.0.0:8080 即可浏览文件。
+
+## 9. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

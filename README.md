@@ -68,6 +68,7 @@ qxw-hello --name 开发者
 | `qxw-chat-provider` | ⚙️ AI 对话提供商管理（增删改查） |
 | `qxw-gitbook` | 📖 Markdown 文档工具（PDF 转换 / 本地预览） |
 | `qxw-webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
+| `qxw-file-server` | 📂 文件服务器（HTTP / FTP 文件共享，支持鉴权） |
 
 ## 项目结构
 

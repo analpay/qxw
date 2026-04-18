@@ -13,6 +13,7 @@
 | `qxw-chat-provider` | AI 对话提供商管理 | ✅ 可用 |
 | `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
 | `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
+| `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
 
 ## qxw
 
@@ -421,3 +422,89 @@ URL Encode / Decode 转换。
 #### Base64 编解码
 
 Base64 Encode / Decode 转换。
+
+## qxw-file-server
+
+文件服务器工具，支持通过 HTTP 或 FTP 协议快速共享目录文件。两种协议均内置鉴权保护。
+
+### 安装 FTP 依赖
+
+`http` 子命令开箱可用。`ftp` 子命令需要额外安装 `pyftpdlib`：
+
+```bash
+pip install pyftpdlib
+
+# 或一步到位
+pip install "qxw[ftp]"
+```
+
+### 基本用法
+
+```bash
+# 启动 HTTP 文件服务器（共享当前目录）
+qxw-file-server http
+
+# 启动 FTP 文件服务器
+qxw-file-server ftp
+
+# 指定共享目录
+qxw-file-server http -d /tmp
+qxw-file-server ftp -d /tmp
+
+# 指定用户名和密码
+qxw-file-server http -u myuser -P mypass
+qxw-file-server ftp -u myuser -P mypass
+
+# FTP 开启写入权限
+qxw-file-server ftp -w
+```
+
+### 子命令说明
+
+| 子命令 | 说明 |
+|--------|------|
+| `http` | 启动 HTTP 文件服务器（带 Basic Auth 鉴权） |
+| `ftp` | 启动 FTP 文件服务器（带用户鉴权） |
+
+### http 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | 共享目录路径 |
+| `--port` | `-p` | 8080 | 服务端口 |
+| `--host` | `-H` | 127.0.0.1 | 监听地址 |
+| `--username` | `-u` | admin | 鉴权用户名 |
+| `--password` | `-P` | (自动生成) | 鉴权密码，不指定则自动生成随机密码 |
+
+### ftp 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | 共享目录路径 |
+| `--port` | `-p` | 2121 | 服务端口 |
+| `--host` | `-H` | 0.0.0.0 | 监听地址 |
+| `--username` | `-u` | admin | 鉴权用户名 |
+| `--password` | `-P` | (自动生成) | 鉴权密码，不指定则自动生成随机密码 |
+| `--writable` | `-w` | false | 允许上传 / 写入 / 删除文件 |
+
+### 鉴权说明
+
+- 不指定 `--password` 时，每次启动自动生成随机密码并打印在终端
+- HTTP 使用 Basic Auth 鉴权，浏览器访问时弹出登录窗口
+- FTP 使用标准 FTP 用户认证，客户端连接时需输入用户名和密码
+
+### 使用示例
+
+```bash
+# 在局域网内分享文件
+qxw-file-server http -d ~/Downloads
+
+# 仅本机访问
+qxw-file-server http -H 127.0.0.1
+
+# FTP 可写模式（允许上传）
+qxw-file-server ftp -d /tmp/shared -w -u upload -P secret123
+
+# 使用 FTP 客户端连接
+ftp admin@localhost 2121
+```
