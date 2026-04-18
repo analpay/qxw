@@ -571,6 +571,7 @@ qxw-image raw -P warm
 | `--quality` | `-q` | 92 | JPEG 压缩质量 (1-100) |
 | `--preset` | `-P` | natural | 调色预设 |
 | `--overwrite` | - | false | 覆盖已存在的输出文件 |
+| `--auto-balance` | `-A` | false | 启用 CLAHE 自适应直方图均衡（改善亮度分布） |
 
 ### 调色预设说明
 
@@ -609,4 +610,7 @@ qxw-image raw -d ~/RAWs -o ~/JPGs -P film -q 95
 
 # 覆盖已有文件
 qxw-image raw --overwrite
+
+# 启用直方图均衡 + 暖色调预设
+qxw-image raw -P warm --auto-balance
 ```

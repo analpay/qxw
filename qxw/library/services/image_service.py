@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from qxw.library.base.logger import get_logger
 
 if TYPE_CHECKING:
+    import numpy as np
     from PIL import Image
 
 logger = get_logger("qxw.image")
@@ -346,16 +347,19 @@ def convert_raw(
     output_path: Path,
     preset: ColorPreset = ColorPreset.NATURAL,
     quality: int = DEFAULT_JPEG_QUALITY,
+    auto_balance: bool = False,
 ) -> None:
     """将 RAW 文件转换为 JPG
 
-    使用 rawpy 解析 RAW 数据，应用指定调色预设后保存为 JPEG。
+    使用 rawpy 解析 RAW 数据，可选 CLAHE 自适应直方图均衡，
+    再应用指定调色预设后保存为 JPEG。
 
     Args:
         raw_path: RAW 文件路径
         output_path: 输出 JPG 路径
         preset: 调色预设
         quality: JPEG 压缩质量 (1-100)
+        auto_balance: 是否启用 CLAHE 自适应直方图均衡
 
     Raises:
         ImportError: rawpy 或 Pillow 未安装
@@ -374,10 +378,193 @@ def convert_raw(
         )
 
     img = Image.fromarray(rgb)
+
+    if auto_balance:
+        img = _apply_clahe(img)
+
     img = _apply_preset(img, preset)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(output_path), "JPEG", quality=quality, progressive=True)
+
+
+def _apply_clahe(
+    img: "Image.Image",
+    clip_limit: float = 2.0,
+    grid_size: int = 8,
+) -> "Image.Image":
+    """CLAHE 自适应直方图均衡（纯 NumPy 实现，无需 OpenCV）
+
+    将图片转换到 LAB 色彩空间的 L 通道上做分块自适应均衡，
+    保留色彩信息的同时改善亮度分布。
+
+    Args:
+        img: 输入 RGB 图片
+        clip_limit: 对比度裁剪阈值，越大对比度增强越强
+        grid_size: 分块网格边数（grid_size x grid_size）
+    """
+    import numpy as np
+    from PIL import Image
+
+    rgb = np.asarray(img, dtype=np.float32)
+
+    # RGB → LAB（简化版：先转线性 sRGB，再转 XYZ，再转 LAB）
+    lab = _rgb_to_lab(rgb)
+    l_channel = lab[:, :, 0]  # L 范围 [0, 100]
+
+    # 在 L 通道上执行 CLAHE
+    l_eq = _clahe_channel(l_channel, clip_limit=clip_limit, grid_size=grid_size, val_range=(0.0, 100.0))
+    lab[:, :, 0] = l_eq
+
+    # LAB → RGB
+    out_rgb = _lab_to_rgb(lab)
+    out_rgb = np.clip(out_rgb, 0, 255).astype(np.uint8)
+    return Image.fromarray(out_rgb, "RGB")
+
+
+def _clahe_channel(
+    channel: "np.ndarray",
+    clip_limit: float,
+    grid_size: int,
+    val_range: tuple[float, float],
+    n_bins: int = 256,
+) -> "np.ndarray":
+    """对单通道执行 CLAHE"""
+    import numpy as np
+
+    h, w = channel.shape
+    lo, hi = val_range
+
+    # 量化到 [0, n_bins-1]
+    normalized = (channel - lo) / (hi - lo + 1e-8)
+    quantized = np.clip((normalized * (n_bins - 1)).astype(np.int32), 0, n_bins - 1)
+
+    # 计算每个 tile 的裁剪直方图映射
+    tile_h = max(h // grid_size, 1)
+    tile_w = max(w // grid_size, 1)
+
+    # 构建每个 tile 的 CDF 查找表
+    mappings = np.zeros((grid_size, grid_size, n_bins), dtype=np.float64)
+
+    for ty in range(grid_size):
+        for tx in range(grid_size):
+            y0 = ty * tile_h
+            y1 = h if ty == grid_size - 1 else (ty + 1) * tile_h
+            x0 = tx * tile_w
+            x1 = w if tx == grid_size - 1 else (tx + 1) * tile_w
+
+            tile = quantized[y0:y1, x0:x1]
+            tile_pixels = tile.size
+
+            hist = np.bincount(tile.ravel(), minlength=n_bins).astype(np.float64)
+
+            # 裁剪超出部分并重新分配
+            limit = max(1, int(clip_limit * tile_pixels / n_bins))
+            excess = np.sum(np.maximum(hist - limit, 0))
+            hist = np.minimum(hist, limit)
+            hist += excess / n_bins
+
+            cdf = np.cumsum(hist)
+            cdf_min = cdf[cdf > 0].min() if np.any(cdf > 0) else 0
+            denom = tile_pixels - cdf_min
+            if denom > 0:
+                mappings[ty, tx] = (cdf - cdf_min) / denom * (n_bins - 1)
+            else:
+                mappings[ty, tx] = np.arange(n_bins, dtype=np.float64)
+
+    # 双线性插值各 tile 映射结果
+    result = np.zeros_like(channel, dtype=np.float64)
+
+    for y in range(h):
+        for x in range(w):
+            # 当前像素对应的 tile 浮点坐标
+            fy = (y - tile_h / 2.0) / tile_h
+            fx = (x - tile_w / 2.0) / tile_w
+            fy = np.clip(fy, 0, grid_size - 1.001)
+            fx = np.clip(fx, 0, grid_size - 1.001)
+
+            ty0 = int(fy)
+            tx0 = int(fx)
+            ty1 = min(ty0 + 1, grid_size - 1)
+            tx1 = min(tx0 + 1, grid_size - 1)
+
+            dy = fy - ty0
+            dx = fx - tx0
+
+            val = quantized[y, x]
+            v00 = mappings[ty0, tx0, val]
+            v01 = mappings[ty0, tx1, val]
+            v10 = mappings[ty1, tx0, val]
+            v11 = mappings[ty1, tx1, val]
+
+            interp = v00 * (1 - dy) * (1 - dx) + v01 * (1 - dy) * dx + v10 * dy * (1 - dx) + v11 * dy * dx
+            result[y, x] = interp / (n_bins - 1) * (hi - lo) + lo
+
+    return result
+
+
+def _rgb_to_lab(rgb: "np.ndarray") -> "np.ndarray":
+    """RGB [0,255] → CIE LAB（简化实现）"""
+    import numpy as np
+
+    arr = rgb / 255.0
+
+    # sRGB gamma 解码 → 线性
+    linear = np.where(arr <= 0.04045, arr / 12.92, ((arr + 0.055) / 1.055) ** 2.4)
+
+    # 线性 RGB → XYZ (D65)
+    x = linear[:, :, 0] * 0.4124564 + linear[:, :, 1] * 0.3575761 + linear[:, :, 2] * 0.1804375
+    y = linear[:, :, 0] * 0.2126729 + linear[:, :, 1] * 0.7151522 + linear[:, :, 2] * 0.0721750
+    z = linear[:, :, 0] * 0.0193339 + linear[:, :, 1] * 0.1191920 + linear[:, :, 2] * 0.9503041
+
+    # D65 白点归一化
+    x /= 0.95047
+    z /= 1.08883
+
+    def f(t: "np.ndarray") -> "np.ndarray":
+        delta = 6.0 / 29.0
+        return np.where(t > delta**3, np.cbrt(t), t / (3 * delta**2) + 4.0 / 29.0)
+
+    fx, fy, fz = f(x), f(y), f(z)
+
+    lab = np.empty_like(rgb)
+    lab[:, :, 0] = 116.0 * fy - 16.0  # L
+    lab[:, :, 1] = 500.0 * (fx - fy)   # a
+    lab[:, :, 2] = 200.0 * (fy - fz)   # b
+    return lab
+
+
+def _lab_to_rgb(lab: "np.ndarray") -> "np.ndarray":
+    """CIE LAB → RGB [0,255]（简化实现）"""
+    import numpy as np
+
+    fy = (lab[:, :, 0] + 16.0) / 116.0
+    fx = lab[:, :, 1] / 500.0 + fy
+    fz = fy - lab[:, :, 2] / 200.0
+
+    delta = 6.0 / 29.0
+
+    def f_inv(t: "np.ndarray") -> "np.ndarray":
+        return np.where(t > delta, t**3, 3 * delta**2 * (t - 4.0 / 29.0))
+
+    x = 0.95047 * f_inv(fx)
+    y = 1.00000 * f_inv(fy)
+    z = 1.08883 * f_inv(fz)
+
+    # XYZ → 线性 RGB
+    r = x * 3.2404542 + y * -1.5371385 + z * -0.4985314
+    g = x * -0.9692660 + y * 1.8760108 + z * 0.0415560
+    b = x * 0.0556434 + y * -0.2040259 + z * 1.0572252
+
+    # 线性 → sRGB gamma
+    def gamma(c: "np.ndarray") -> "np.ndarray":
+        return np.where(c <= 0.0031308, 12.92 * c, 1.055 * np.power(np.maximum(c, 0), 1.0 / 2.4) - 0.055)
+
+    out = np.empty_like(lab)
+    out[:, :, 0] = gamma(r) * 255.0
+    out[:, :, 1] = gamma(g) * 255.0
+    out[:, :, 2] = gamma(b) * 255.0
+    return out
 
 
 # ============================================================

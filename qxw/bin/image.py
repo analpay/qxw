@@ -560,6 +560,7 @@ def http_command(
     help="调色预设",
 )
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True, help="是否覆盖已存在的输出文件")
+@click.option("--auto-balance", "-A", is_flag=True, default=False, help="启用 CLAHE 自适应直方图均衡（改善亮度分布）")
 def raw_command(
     directory: str,
     output_dir: str | None,
@@ -567,6 +568,7 @@ def raw_command(
     quality: int,
     preset: str,
     overwrite: bool,
+    auto_balance: bool,
 ) -> None:
     """批量将 RAW 图片转换为 JPG
 
@@ -595,6 +597,8 @@ def raw_command(
         qxw-image raw -P bw -q 95               # 黑白预设 + 高质量
         qxw-image raw -o ./output               # 指定输出目录
         qxw-image raw --overwrite               # 覆盖已有文件
+        qxw-image raw --auto-balance            # 启用直方图均衡
+        qxw-image raw -P warm --auto-balance    # 预设 + 均衡组合
     """
     try:
         _require_pillow()
@@ -614,6 +618,8 @@ def raw_command(
         if out_path:
             console.print(f"📂 输出目录: [cyan]{out_path}[/]")
         console.print(f"🎨 调色预设: [bold]{color_preset.label}[/] — {color_preset.description}")
+        if auto_balance:
+            console.print("⚖️  自动均衡: [bold green]已启用[/]（CLAHE 自适应直方图均衡）")
         console.print(f"📊 JPEG 质量: {quality}")
         console.print()
 
@@ -651,7 +657,7 @@ def raw_command(
                     continue
 
                 try:
-                    convert_raw(raw_file, dest, preset=color_preset, quality=quality)
+                    convert_raw(raw_file, dest, preset=color_preset, quality=quality, auto_balance=auto_balance)
                     success_count += 1
                 except Exception as e:
                     logger.warning("转换失败 %s: %s", raw_file.name, e)
