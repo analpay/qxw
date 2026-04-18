@@ -173,6 +173,15 @@ class _FileServerHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         logger.debug(format, *args)
 
+    def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
+        short_msg = self.responses.get(code, ("Error",))[0]
+        self.send_response(code, short_msg)
+        body = f"<h1>{code} {short_msg}</h1><p>{message or short_msg}</p>".encode("utf-8")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _check_auth(self) -> bool:
         """校验 Basic Auth 鉴权"""
         auth_header = self.headers.get("Authorization", "")

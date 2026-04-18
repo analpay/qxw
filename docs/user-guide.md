@@ -14,6 +14,7 @@
 | `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
 | `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
 | `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
+| `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换） | ✅ 可用 |
 
 ## qxw
 
@@ -507,4 +508,105 @@ qxw-file-server ftp -d /tmp/shared -w -u upload -P secret123
 
 # 使用 FTP 客户端连接
 ftp admin@localhost 2121
+```
+
+## qxw-image
+
+图片工具集，支持通过 HTTP 服务浏览图片画廊（含缩略图和 Live Photo），以及批量将 RAW 图片转换为 JPG。
+
+### 安装图片处理依赖
+
+```bash
+pip install "qxw[image]"
+```
+
+这将安装 Pillow（图片处理）和 rawpy（RAW 格式解析）。如需 HEIC 格式支持，额外安装：
+
+```bash
+pip install pillow-heif
+```
+
+### 基本用法
+
+```bash
+# 启动图片浏览 HTTP 服务（当前目录）
+qxw-image http
+
+# 指定图片目录
+qxw-image http -d ~/Photos
+
+# 批量转换当前目录的 RAW 文件
+qxw-image raw
+
+# 使用暖色调预设
+qxw-image raw -P warm
+```
+
+### 子命令说明
+
+| 子命令 | 说明 |
+|--------|------|
+| `http` | 启动图片浏览 HTTP 服务（缩略图画廊，支持 Live Photo） |
+| `raw` | 批量将 RAW 图片转换为 JPG（支持调色预设） |
+
+### http 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | 图片目录路径 |
+| `--port` | `-p` | 8080 | 服务端口 |
+| `--host` | `-H` | 127.0.0.1 | 监听地址 |
+| `--thumb-size` | `-s` | 400 | 缩略图尺寸（像素） |
+| `--thumb-quality` | - | 85 | 缩略图 JPEG 质量 (1-100) |
+| `--recursive` | `-r` | true | 递归扫描子目录 |
+| `--no-recursive` | - | - | 不递归扫描子目录 |
+
+### raw 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | RAW 文件所在目录 |
+| `--output` | `-o` | (与源文件同目录) | 输出目录 |
+| `--recursive` | `-r` | false | 递归处理子目录 |
+| `--quality` | `-q` | 92 | JPEG 压缩质量 (1-100) |
+| `--preset` | `-P` | natural | 调色预设 |
+| `--overwrite` | - | false | 覆盖已存在的输出文件 |
+
+### 调色预设说明
+
+| 预设 | 名称 | 说明 |
+|------|------|------|
+| `natural` | 自然色彩 | 使用相机白平衡，不做额外调色 |
+| `vivid` | 鲜艳 | 提升饱和度和对比度，色彩更鲜明 |
+| `warm` | 暖色调 | 偏暖色调，适合人像和日落场景 |
+| `cool` | 冷色调 | 偏冷色调，适合风景和建筑场景 |
+| `bw` | 黑白 | 经典黑白，带轻微对比度增强 |
+| `film` | 胶片风格 | 模拟胶片质感，低对比度偏暖 |
+
+### 支持的格式
+
+- **图片格式**：JPG, PNG, GIF, WebP, BMP, TIFF, HEIC
+- **RAW 格式**：CR2, CR3 (Canon), NEF (Nikon), ARW (Sony), DNG (Adobe), ORF (Olympus), RW2 (Panasonic), PEF (Pentax), RAF (Fujifilm) 等
+- **Live Photo**：自动检测同目录下同名的图片和视频文件（MOV/MP4）
+
+### 使用示例
+
+```bash
+# 浏览照片目录
+qxw-image http -d ~/Photos
+
+# 局域网分享图片
+qxw-image http -d ~/Photos -H 0.0.0.0
+
+# 调整缩略图参数
+qxw-image http -s 300 --thumb-quality 70
+
+# 批量转换 RAW 文件（递归处理子目录）
+qxw-image raw -d ~/RAWs -r
+
+# 使用胶片风格转换，输出到指定目录
+qxw-image raw -d ~/RAWs -o ~/JPGs -P film -q 95
+
+# 覆盖已有文件
+qxw-image raw --overwrite
 ```

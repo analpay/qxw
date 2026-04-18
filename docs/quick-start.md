@@ -157,7 +157,28 @@ qxw-file-server ftp
 
 启动后终端会打印自动生成的用户名和密码，用浏览器访问 http://0.0.0.0:8080 即可浏览文件。
 
-## 9. 下一步
+## 9. 图片工具
+
+```bash
+# 安装图片处理依赖
+pip install "qxw[image]"
+
+# 启动图片浏览 HTTP 服务
+qxw-image http
+
+# 指定目录
+qxw-image http -d ~/Photos
+
+# 批量转换 RAW 文件为 JPG
+qxw-image raw -d ~/RAWs
+
+# 使用暖色调预设
+qxw-image raw -P warm
+```
+
+浏览器打开 http://127.0.0.1:8080 即可浏览图片画廊，点击缩略图查看原图，支持 Live Photo 播放。
+
+## 10. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

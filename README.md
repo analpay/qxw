@@ -69,6 +69,7 @@ qxw-hello --name 开发者
 | `qxw-gitbook` | 📖 Markdown 文档工具（PDF 转换 / 本地预览） |
 | `qxw-webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
 | `qxw-file-server` | 📂 文件服务器（HTTP / FTP 文件共享，支持鉴权） |
+| `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换） |
 
 ## 项目结构
 
