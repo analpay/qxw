@@ -1,13 +1,10 @@
 """qxw-image 命令入口
 
-图片工具集，支持图片浏览 HTTP 服务和 RAW 批量转换。
+图片工具集，支持图片浏览 HTTP 服务。
 
 用法:
     qxw-image http                        # 启动图片浏览服务（默认 8080 端口）
     qxw-image http --dir ~/Photos         # 指定图片目录
-    qxw-image raw                         # 批量转换当前目录 RAW 文件为 JPG
-    qxw-image raw --preset warm           # 使用暖色调预设
-    qxw-image raw -d ~/Photos -r          # 递归处理子目录
     qxw-image --help                      # 查看帮助
 """
 
@@ -21,7 +18,6 @@ from pathlib import Path
 import click
 from pydantic import BaseModel, Field
 from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
 from qxw import __version__
 from qxw.library.base.exceptions import QxwError
@@ -56,13 +52,6 @@ def _require_pillow() -> None:
         from PIL import Image  # noqa: F401
     except ImportError:
         raise QxwError('需要安装 Pillow 库: pip install Pillow 或 pip install "qxw[image]"') from None
-
-
-def _require_rawpy() -> None:
-    try:
-        import rawpy  # noqa: F401
-    except ImportError:
-        raise QxwError('需要安装 rawpy 库: pip install rawpy 或 pip install "qxw[image]"') from None
 
 
 # ============================================================
@@ -440,7 +429,7 @@ class _ImageServerHandler(BaseHTTPRequestHandler):
 
 @click.group(
     name="qxw-image",
-    help="QXW 图片工具集（HTTP 图片浏览 / RAW 批量转换）",
+    help="QXW 图片工具集（HTTP 图片浏览）",
     epilog="使用 qxw-image <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
@@ -540,147 +529,6 @@ def http_command(
         sys.exit(e.exit_code)
     except KeyboardInterrupt:
         click.echo("\n服务已停止")
-    except Exception as e:
-        logger.exception("未预期的错误")
-        click.echo(f"未预期的错误: {e}", err=True)
-        sys.exit(1)
-
-
-@main.command(name="raw", help="批量将 RAW 图片转换为 JPG（支持调色预设）")
-@click.option("--dir", "-d", "directory", default=".", show_default=True, help="RAW 文件所在目录")
-@click.option("--output", "-o", "output_dir", default=None, help="输出目录（默认与源文件同目录）")
-@click.option("--recursive", "-r", is_flag=True, default=False, help="递归处理子目录")
-@click.option("--quality", "-q", default=92, show_default=True, type=int, help="JPEG 压缩质量 (1-100)")
-@click.option(
-    "--preset",
-    "-P",
-    default="natural",
-    show_default=True,
-    type=click.Choice(["natural", "vivid", "warm", "cool", "bw", "film"], case_sensitive=False),
-    help="调色预设",
-)
-@click.option("--overwrite/--no-overwrite", default=False, show_default=True, help="是否覆盖已存在的输出文件")
-@click.option("--auto-balance", "-A", is_flag=True, default=False, help="启用 CLAHE 自适应直方图均衡（改善亮度分布）")
-def raw_command(
-    directory: str,
-    output_dir: str | None,
-    recursive: bool,
-    quality: int,
-    preset: str,
-    overwrite: bool,
-    auto_balance: bool,
-) -> None:
-    """批量将 RAW 图片转换为 JPG
-
-    扫描目录中的 RAW 文件，使用指定调色预设转换为高质量 JPEG。
-
-    \b
-    支持的 RAW 格式：
-      Canon (CR2/CR3), Nikon (NEF), Sony (ARW), Adobe (DNG),
-      Olympus (ORF), Panasonic (RW2), Pentax (PEF), Fujifilm (RAF),
-      Hasselblad (3FR), Phase One (IIQ), Leica (RWL) 等
-
-    \b
-    调色预设：
-      natural  - 自然色彩（使用相机白平衡，不做额外调色）
-      vivid    - 鲜艳（提升饱和度和对比度）
-      warm     - 暖色调（适合人像和日落场景）
-      cool     - 冷色调（适合风景和建筑场景）
-      bw       - 黑白（经典黑白，带轻微对比度增强）
-      film     - 胶片风格（模拟胶片质感，低对比度偏暖）
-
-    \b
-    示例:
-        qxw-image raw                           # 转换当前目录的 RAW 文件
-        qxw-image raw -d ~/Photos -r            # 递归处理
-        qxw-image raw -P warm                   # 使用暖色调
-        qxw-image raw -P bw -q 95               # 黑白预设 + 高质量
-        qxw-image raw -o ./output               # 指定输出目录
-        qxw-image raw --overwrite               # 覆盖已有文件
-        qxw-image raw --auto-balance            # 启用直方图均衡
-        qxw-image raw -P warm --auto-balance    # 预设 + 均衡组合
-    """
-    try:
-        _require_pillow()
-        _require_rawpy()
-
-        from qxw.library.services.image_service import ColorPreset, convert_raw, scan_raw_files
-
-        dir_path = Path(directory).resolve()
-        if not dir_path.is_dir():
-            raise click.BadParameter(f"目录不存在: {directory}")
-
-        out_path = Path(output_dir).resolve() if output_dir else None
-        color_preset = ColorPreset(preset.lower())
-
-        console.print(f"📷 [bold]QXW RAW Converter[/] v{__version__}")
-        console.print(f"📁 源目录: [cyan]{dir_path}[/]")
-        if out_path:
-            console.print(f"📂 输出目录: [cyan]{out_path}[/]")
-        console.print(f"🎨 调色预设: [bold]{color_preset.label}[/] — {color_preset.description}")
-        if auto_balance:
-            console.print("⚖️  自动均衡: [bold green]已启用[/]（CLAHE 自适应直方图均衡）")
-        console.print(f"📊 JPEG 质量: {quality}")
-        console.print()
-
-        raw_files = scan_raw_files(dir_path, recursive=recursive)
-        if not raw_files:
-            console.print("📭 未找到 RAW 文件")
-            return
-
-        console.print(f"🔍 找到 [bold]{len(raw_files)}[/] 个 RAW 文件\n")
-
-        success_count = 0
-        skip_count = 0
-        fail_count = 0
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            TextColumn("{task.completed}/{task.total}"),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("转换中...", total=len(raw_files))
-
-            for raw_file in raw_files:
-                out_name = f"{raw_file.stem}_{color_preset.value}.jpg"
-                if out_path:
-                    rel_dir = raw_file.relative_to(dir_path).parent
-                    dest = out_path / rel_dir / out_name
-                else:
-                    dest = raw_file.parent / out_name
-
-                if dest.exists() and not overwrite:
-                    skip_count += 1
-                    progress.advance(task)
-                    continue
-
-                try:
-                    convert_raw(raw_file, dest, preset=color_preset, quality=quality, auto_balance=auto_balance)
-                    success_count += 1
-                except Exception as e:
-                    logger.warning("转换失败 %s: %s", raw_file.name, e)
-                    fail_count += 1
-
-                progress.advance(task)
-
-        console.print()
-        console.print(f"✅ 转换完成: [green]{success_count}[/] 成功", end="")
-        if skip_count:
-            console.print(f"，[yellow]{skip_count}[/] 跳过（已存在）", end="")
-        if fail_count:
-            console.print(f"，[red]{fail_count}[/] 失败", end="")
-        console.print()
-
-    except QxwError as e:
-        logger.error("命令执行失败: %s", e.message)
-        click.echo(f"错误: {e.message}", err=True)
-        sys.exit(e.exit_code)
-    except KeyboardInterrupt:
-        click.echo("\n操作已取消")
-        sys.exit(130)
     except Exception as e:
         logger.exception("未预期的错误")
         click.echo(f"未预期的错误: {e}", err=True)

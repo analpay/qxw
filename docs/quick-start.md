@@ -168,12 +168,6 @@ qxw-image http
 
 # 指定目录
 qxw-image http -d ~/Photos
-
-# 批量转换 RAW 文件为 JPG
-qxw-image raw -d ~/RAWs
-
-# 使用暖色调预设
-qxw-image raw -P warm
 ```
 
 浏览器打开 http://127.0.0.1:8080 即可浏览图片画廊，点击缩略图查看原图，支持 Live Photo 播放。
