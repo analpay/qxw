@@ -1,6 +1,6 @@
 """图片处理服务
 
-提供缩略图生成、Live Photo 检测、浏览器可显示格式转换等功能。
+提供缩略图生成、Live Photo 检测、浏览器可显示格式转换、RAW 批量转换等功能。
 """
 
 from __future__ import annotations
@@ -145,6 +145,85 @@ def scan_images(directory: Path, recursive: bool = True) -> list[ImageEntry]:
         ))
 
     return entries
+
+
+def scan_raw_files(directory: Path, recursive: bool = False) -> list[Path]:
+    """扫描目录获取所有 RAW 文件
+
+    Args:
+        directory: 要扫描的目录
+        recursive: 是否递归扫描子目录
+
+    Returns:
+        按文件名排序的 RAW 文件路径列表
+    """
+    directory = directory.resolve()
+    all_files = list(directory.rglob("*")) if recursive else list(directory.iterdir())
+    raw_files = [
+        f for f in all_files
+        if f.is_file() and f.suffix.lower() in RAW_EXTENSIONS and not f.name.startswith(".")
+    ]
+    return sorted(raw_files, key=lambda x: x.name.lower())
+
+
+# ============================================================
+# RAW 转 JPG
+# ============================================================
+
+
+def convert_raw(
+    raw_path: Path,
+    output_path: Path,
+    quality: int = DEFAULT_JPEG_QUALITY,
+) -> None:
+    """将 RAW 文件转换为 JPG
+
+    优先提取 RAW 文件内嵌的 JPEG 预览（相机直出色彩、色调曲线与
+    Finder/Preview 显示一致）；嵌入预览缺失或尺寸过小时，退化为
+    rawpy 重新解码（sRGB/8bit/相机白平衡/自动亮度）。
+
+    Args:
+        raw_path: RAW 文件路径
+        output_path: 输出 JPG 路径
+        quality: JPEG 压缩质量 (1-100)。仅在 rawpy 解码退化路径下生效；
+            使用相机嵌入预览时直接沿用原始 JPEG 字节，保留相机直出画质与 EXIF。
+
+    Raises:
+        ImportError: rawpy 或 Pillow 未安装
+        Exception: 转换失败
+    """
+    import io
+
+    import rawpy
+    from PIL import Image
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with rawpy.imread(str(raw_path)) as raw:
+        # 优先使用相机内置的 JPEG 预览，与相机直出色彩一致
+        thumb = None
+        try:
+            thumb = raw.extract_thumb()
+        except (rawpy.LibRawNoThumbnailError, rawpy.LibRawUnsupportedThumbnailError):
+            pass
+
+        if thumb is not None and thumb.format == rawpy.ThumbFormat.JPEG:
+            # 嵌入预览长边 >= 1000px 才采用，避免老相机只带 160x120 小图
+            preview_img = Image.open(io.BytesIO(thumb.data))
+            if max(preview_img.size) >= 1000:
+                output_path.write_bytes(thumb.data)
+                return
+
+        # 退化路径：使用 rawpy 重新解码（不含相机厂商调色）
+        rgb = raw.postprocess(
+            use_camera_wb=True,
+            gamma=(2.222, 4.5),
+            output_color=rawpy.ColorSpace.sRGB,
+            output_bps=8,
+            no_auto_bright=False,
+        )
+
+    Image.fromarray(rgb).save(str(output_path), "JPEG", quality=quality, progressive=True)
 
 
 # ============================================================

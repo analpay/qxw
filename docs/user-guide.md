@@ -14,7 +14,7 @@
 | `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
 | `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
 | `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
-| `qxw-image` | 📷 图片工具集（HTTP 图片浏览，支持 Live Photo） | ✅ 可用 |
+| `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换） | ✅ 可用 |
 
 ## qxw
 
@@ -512,7 +512,7 @@ ftp admin@localhost 2121
 
 ## qxw-image
 
-图片工具集，支持通过 HTTP 服务浏览图片画廊（含缩略图和 Live Photo）。
+图片工具集，支持通过 HTTP 服务浏览图片画廊（含缩略图和 Live Photo），并支持将相机 RAW 文件批量转换为 JPG。
 
 ### 安装图片处理依赖
 
@@ -520,7 +520,7 @@ ftp admin@localhost 2121
 pip install "qxw[image]"
 ```
 
-这将安装 Pillow（图片处理）和 rawpy（用于在画廊中预览 RAW 格式）。如需 HEIC 格式支持，额外安装：
+这将安装 Pillow（图片处理）和 rawpy（用于 RAW 解码和画廊预览）。如需 HEIC 格式支持，额外安装：
 
 ```bash
 pip install pillow-heif
@@ -534,6 +534,9 @@ qxw-image http
 
 # 指定图片目录
 qxw-image http -d ~/Photos
+
+# 将当前目录 RAW 文件批量转为 JPG（输出到 ./jpg/）
+qxw-image raw
 ```
 
 ### 子命令说明
@@ -541,6 +544,7 @@ qxw-image http -d ~/Photos
 | 子命令 | 说明 |
 |--------|------|
 | `http` | 启动图片浏览 HTTP 服务（缩略图画廊，支持 Live Photo） |
+| `raw`  | 将相机导出的 RAW 图片批量转换为 JPG |
 
 ### http 参数说明
 
@@ -553,6 +557,23 @@ qxw-image http -d ~/Photos
 | `--thumb-quality` | - | 85 | 缩略图 JPEG 质量 (1-100) |
 | `--recursive` | `-r` | true | 递归扫描子目录 |
 | `--no-recursive` | - | - | 不递归扫描子目录 |
+
+### raw 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | RAW 文件所在目录 |
+| `--output` | `-o` | `<源目录>/jpg` | 输出目录（保持相对路径结构） |
+| `--recursive` | `-r` | false | 是否递归处理子目录 |
+| `--quality` | `-q` | 92 | JPEG 压缩质量 (1-100)，仅在退化解码路径生效 |
+| `--overwrite` / `--no-overwrite` | - | `--no-overwrite` | 是否覆盖已存在的输出文件 |
+
+### raw 转换策略
+
+为确保输出与相机直出色彩一致（即 Finder / Preview 打开 RAW 时看到的效果），`raw` 子命令按以下顺序处理：
+
+1. **优先沿用相机嵌入预览**：如果 RAW 文件中包含尺寸合格（长边 ≥ 1000px）的 JPEG 预览，直接写入其原始字节作为输出。这样色彩、色调、EXIF 都与相机直出保持一致，`--quality` 对此路径无影响。
+2. **退化路径**：当嵌入预览缺失或尺寸不足时，使用 rawpy 以 sRGB / 8bit / 相机白平衡 / 自动亮度重新解码，此时 `--quality` 生效。退化路径不会套用相机厂商的调色，效果可能偏平。
 
 ### 支持的格式
 
@@ -571,4 +592,10 @@ qxw-image http -d ~/Photos -H 0.0.0.0
 
 # 调整缩略图参数
 qxw-image http -s 300 --thumb-quality 70
+
+# 将 ~/Photos 里的 RAW 文件（含子目录）批量转换为 JPG
+qxw-image raw -d ~/Photos -r
+
+# 指定输出目录并覆盖已有文件
+qxw-image raw -d ~/Photos -o ~/Photos/converted --overwrite
 ```

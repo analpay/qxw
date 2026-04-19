@@ -168,6 +168,9 @@ qxw-image http
 
 # 指定目录
 qxw-image http -d ~/Photos
+
+# 将相机 RAW 文件批量转换为 JPG（输出到源目录下的 jpg/）
+qxw-image raw -d ~/Photos -r
 ```
 
 浏览器打开 http://127.0.0.1:8080 即可浏览图片画廊，点击缩略图查看原图，支持 Live Photo 播放。

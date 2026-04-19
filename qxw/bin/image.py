@@ -1,10 +1,12 @@
 """qxw-image 命令入口
 
-图片工具集，支持图片浏览 HTTP 服务。
+图片工具集，支持图片浏览 HTTP 服务和 RAW 批量转换。
 
 用法:
     qxw-image http                        # 启动图片浏览服务（默认 8080 端口）
     qxw-image http --dir ~/Photos         # 指定图片目录
+    qxw-image raw                         # 将当前目录 RAW 文件批量转换为 JPG
+    qxw-image raw -d ~/Photos -r          # 递归处理子目录
     qxw-image --help                      # 查看帮助
 """
 
@@ -18,6 +20,7 @@ from pathlib import Path
 import click
 from pydantic import BaseModel, Field
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
 from qxw import __version__
 from qxw.library.base.exceptions import QxwError
@@ -52,6 +55,13 @@ def _require_pillow() -> None:
         from PIL import Image  # noqa: F401
     except ImportError:
         raise QxwError('需要安装 Pillow 库: pip install Pillow 或 pip install "qxw[image]"') from None
+
+
+def _require_rawpy() -> None:
+    try:
+        import rawpy  # noqa: F401
+    except ImportError:
+        raise QxwError('需要安装 rawpy 库: pip install rawpy 或 pip install "qxw[image]"') from None
 
 
 # ============================================================
@@ -429,7 +439,7 @@ class _ImageServerHandler(BaseHTTPRequestHandler):
 
 @click.group(
     name="qxw-image",
-    help="QXW 图片工具集（HTTP 图片浏览）",
+    help="QXW 图片工具集（HTTP 图片浏览 / RAW 批量转换）",
     epilog="使用 qxw-image <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
@@ -529,6 +539,115 @@ def http_command(
         sys.exit(e.exit_code)
     except KeyboardInterrupt:
         click.echo("\n服务已停止")
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="raw", help="将相机导出的 RAW 图片批量转换为 JPG")
+@click.option("--dir", "-d", "directory", default=".", show_default=True, help="RAW 文件所在目录")
+@click.option("--output", "-o", "output_dir", default=None, help="输出目录（默认写入源目录下的 jpg/ 子目录）")
+@click.option("--recursive", "-r", is_flag=True, default=False, help="递归处理子目录")
+@click.option("--quality", "-q", default=92, show_default=True, type=int, help="JPEG 压缩质量 (1-100)")
+@click.option("--overwrite/--no-overwrite", default=False, show_default=True, help="是否覆盖已存在的输出文件")
+def raw_command(
+    directory: str,
+    output_dir: str | None,
+    recursive: bool,
+    quality: int,
+    overwrite: bool,
+) -> None:
+    """将 RAW 图片批量转换为 JPG
+
+    扫描目录中的 RAW 文件，使用 rawpy 按相机白平衡解码并输出 JPEG。
+    默认写入源目录下的 jpg/ 子目录，保持相对路径结构不变。
+
+    \b
+    支持的 RAW 格式：
+      Canon (CR2/CR3), Nikon (NEF), Sony (ARW), Adobe (DNG),
+      Olympus (ORF), Panasonic (RW2), Pentax (PEF), Fujifilm (RAF),
+      Hasselblad (3FR), Phase One (IIQ), Leica (RWL) 等
+
+    \b
+    示例:
+        qxw-image raw                        # 转换当前目录 RAW 文件到 ./jpg/
+        qxw-image raw -d ~/Photos -r         # 递归处理子目录
+        qxw-image raw -o ./converted         # 指定输出目录
+        qxw-image raw -q 95 --overwrite      # 高质量 + 覆盖已有文件
+    """
+    try:
+        _require_pillow()
+        _require_rawpy()
+
+        from qxw.library.services.image_service import convert_raw, scan_raw_files
+
+        dir_path = Path(directory).resolve()
+        if not dir_path.is_dir():
+            raise click.BadParameter(f"目录不存在: {directory}")
+
+        out_path = Path(output_dir).resolve() if output_dir else dir_path / "jpg"
+
+        console.print(f"📷 [bold]QXW RAW Converter[/] v{__version__}")
+        console.print(f"📁 源目录: [cyan]{dir_path}[/]")
+        console.print(f"📂 输出目录: [cyan]{out_path}[/]")
+        console.print(f"📊 JPEG 质量: {quality}")
+        console.print()
+
+        raw_files = scan_raw_files(dir_path, recursive=recursive)
+        if not raw_files:
+            console.print("📭 未找到 RAW 文件")
+            return
+
+        console.print(f"🔍 找到 [bold]{len(raw_files)}[/] 个 RAW 文件\n")
+
+        success_count = 0
+        skip_count = 0
+        fail_count = 0
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task = progress.add_task("转换中...", total=len(raw_files))
+
+            for raw_file in raw_files:
+                rel_dir = raw_file.relative_to(dir_path).parent
+                dest = out_path / rel_dir / f"{raw_file.stem}.jpg"
+
+                if dest.exists() and not overwrite:
+                    skip_count += 1
+                    progress.advance(task)
+                    continue
+
+                try:
+                    convert_raw(raw_file, dest, quality=quality)
+                    success_count += 1
+                except Exception as e:
+                    logger.warning("转换失败 %s: %s", raw_file.name, e)
+                    fail_count += 1
+
+                progress.advance(task)
+
+        console.print()
+        console.print(f"✅ 转换完成: [green]{success_count}[/] 成功", end="")
+        if skip_count:
+            console.print(f"，[yellow]{skip_count}[/] 跳过（已存在）", end="")
+        if fail_count:
+            console.print(f"，[red]{fail_count}[/] 失败", end="")
+        console.print()
+
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
     except Exception as e:
         logger.exception("未预期的错误")
         click.echo(f"未预期的错误: {e}", err=True)

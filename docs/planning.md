@@ -11,7 +11,7 @@
 
 ### v0.2.0 (计划中)
 
-- [x] 图片工具命令 `qxw-image`（HTTP 图片浏览，支持 Live Photo）
+- [x] 图片工具命令 `qxw-image`（HTTP 图片浏览 + RAW 批量转 JPG）
 - [ ] 配置管理命令 `qxw-config`
 - [ ] 项目初始化命令 `qxw-init`
 - [ ] 更多 TUI 交互组件
