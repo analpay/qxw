@@ -24,6 +24,8 @@ dependencies = [
     "anthropic>=0.30.0",
     "markdown>=3.5.0",
     "cryptography>=41.0.0",
+    "Pillow>=10.0.0",
+    "rawpy>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -32,10 +34,6 @@ gitbook = [
 ]
 ftp = [
     "pyftpdlib>=1.5.0",
-]
-image = [
-    "Pillow>=10.0.0",
-    "rawpy>=0.20.0",
 ]
 dev = [
     "pytest>=7.0.0",

@@ -645,11 +645,12 @@ def raw_command(
             task = progress.add_task("转换中...", total=len(raw_files))
 
             for raw_file in raw_files:
+                out_name = f"{raw_file.stem}_{color_preset.value}.jpg"
                 if out_path:
-                    rel = raw_file.relative_to(dir_path)
-                    dest = out_path / rel.with_suffix(".jpg")
+                    rel_dir = raw_file.relative_to(dir_path).parent
+                    dest = out_path / rel_dir / out_name
                 else:
-                    dest = raw_file.with_suffix(".jpg")
+                    dest = raw_file.parent / out_name
 
                 if dest.exists() and not overwrite:
                     skip_count += 1

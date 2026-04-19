@@ -374,10 +374,11 @@ def convert_raw(
             gamma=(2.222, 4.5),
             output_color=rawpy.ColorSpace.sRGB,
             output_bps=8,
-            no_auto_bright=True,
+            no_auto_bright=False,
         )
 
     img = Image.fromarray(rgb)
+    img = _apply_base_enhancement(img)
 
     if auto_balance:
         img = _apply_clahe(img)
@@ -472,35 +473,28 @@ def _clahe_channel(
             else:
                 mappings[ty, tx] = np.arange(n_bins, dtype=np.float64)
 
-    # 双线性插值各 tile 映射结果
-    result = np.zeros_like(channel, dtype=np.float64)
+    # 向量化双线性插值（全图一次计算，避免逐像素 Python 循环）
+    ys, xs = np.meshgrid(np.arange(h), np.arange(w), indexing="ij")
 
-    for y in range(h):
-        for x in range(w):
-            # 当前像素对应的 tile 浮点坐标
-            fy = (y - tile_h / 2.0) / tile_h
-            fx = (x - tile_w / 2.0) / tile_w
-            fy = np.clip(fy, 0, grid_size - 1.001)
-            fx = np.clip(fx, 0, grid_size - 1.001)
+    fy = np.clip((ys - tile_h / 2.0) / tile_h, 0, grid_size - 1.001)
+    fx = np.clip((xs - tile_w / 2.0) / tile_w, 0, grid_size - 1.001)
 
-            ty0 = int(fy)
-            tx0 = int(fx)
-            ty1 = min(ty0 + 1, grid_size - 1)
-            tx1 = min(tx0 + 1, grid_size - 1)
+    ty0 = fy.astype(np.int32)
+    tx0 = fx.astype(np.int32)
+    ty1 = np.minimum(ty0 + 1, grid_size - 1)
+    tx1 = np.minimum(tx0 + 1, grid_size - 1)
 
-            dy = fy - ty0
-            dx = fx - tx0
+    dy = fy - ty0
+    dx = fx - tx0
 
-            val = quantized[y, x]
-            v00 = mappings[ty0, tx0, val]
-            v01 = mappings[ty0, tx1, val]
-            v10 = mappings[ty1, tx0, val]
-            v11 = mappings[ty1, tx1, val]
+    # 高级索引：mappings[ty, tx, val] 对 (h,w) 形状的索引数组逐元素查表
+    v00 = mappings[ty0, tx0, quantized]
+    v01 = mappings[ty0, tx1, quantized]
+    v10 = mappings[ty1, tx0, quantized]
+    v11 = mappings[ty1, tx1, quantized]
 
-            interp = v00 * (1 - dy) * (1 - dx) + v01 * (1 - dy) * dx + v10 * dy * (1 - dx) + v11 * dy * dx
-            result[y, x] = interp / (n_bins - 1) * (hi - lo) + lo
-
-    return result
+    interp = v00 * (1 - dy) * (1 - dx) + v01 * (1 - dy) * dx + v10 * dy * (1 - dx) + v11 * dy * dx
+    return interp / (n_bins - 1) * (hi - lo) + lo
 
 
 def _rgb_to_lab(rgb: "np.ndarray") -> "np.ndarray":
@@ -570,6 +564,15 @@ def _lab_to_rgb(lab: "np.ndarray") -> "np.ndarray":
 # ============================================================
 # 调色预设实现
 # ============================================================
+
+
+def _apply_base_enhancement(img: "Image.Image") -> "Image.Image":
+    """补偿 RAW 解马赛克输出与相机内置 JPEG 之间的饱和度/对比度差距"""
+    from PIL import ImageEnhance
+
+    img = ImageEnhance.Color(img).enhance(1.15)
+    img = ImageEnhance.Contrast(img).enhance(1.08)
+    return img
 
 
 def _apply_preset(img: "Image.Image", preset: ColorPreset) -> "Image.Image":
@@ -652,7 +655,7 @@ def _open_raw_as_pil(image_path: Path) -> "Image.Image | None":
                 gamma=(2.222, 4.5),
                 output_color=rawpy.ColorSpace.sRGB,
                 output_bps=8,
-                no_auto_bright=True,
+                no_auto_bright=False,
             )
         return Image.fromarray(rgb)
     except Exception as e:

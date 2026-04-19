@@ -99,3 +99,5 @@ logs/
 *.tmp
 *.temp
 .cache/
+tmp/*
+
