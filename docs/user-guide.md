@@ -14,7 +14,7 @@
 | `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
 | `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
 | `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
-| `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换） | ✅ 可用 |
+| `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG） | ✅ 可用 |
 
 ## qxw
 
@@ -512,7 +512,7 @@ ftp admin@localhost 2121
 
 ## qxw-image
 
-图片工具集，支持通过 HTTP 服务浏览图片画廊（含缩略图和 Live Photo），并支持将相机 RAW 文件批量转换为 JPG。
+图片工具集，支持通过 HTTP 服务浏览图片画廊（含缩略图和 Live Photo）、将相机 RAW 文件批量转换为 JPG，以及将 SVG 批量栅格化为同名 PNG。
 
 ### 安装图片处理依赖
 
@@ -520,7 +520,7 @@ ftp admin@localhost 2121
 pip install "qxw[image]"
 ```
 
-这将安装 Pillow（图片处理）和 rawpy（用于 RAW 解码和画廊预览）。如需 HEIC 格式支持，额外安装：
+这将安装 Pillow（图片处理）、rawpy（用于 RAW 解码和画廊预览）和 cairosvg（SVG 栅格化）。如需 HEIC 格式支持，额外安装：
 
 ```bash
 pip install pillow-heif
@@ -537,6 +537,9 @@ qxw-image http -d ~/Photos
 
 # 将当前目录 RAW 文件批量转为 JPG（输出到 ./jpg/）
 qxw-image raw
+
+# 将当前目录所有 SVG 批量转成同名 PNG（默认递归、2x 缩放、覆盖）
+qxw-image svg
 ```
 
 ### 子命令说明
@@ -545,6 +548,7 @@ qxw-image raw
 |--------|------|
 | `http` | 启动图片浏览 HTTP 服务（缩略图画廊，支持 Live Photo） |
 | `raw`  | 将相机导出的 RAW 图片批量转换为 JPG |
+| `svg`  | 将 SVG 批量栅格化为同目录下的同名 PNG |
 
 ### http 参数说明
 
@@ -570,6 +574,30 @@ qxw-image raw
 | `--use-embedded` / `--no-use-embedded` | - | `--use-embedded` | 是否优先使用相机内嵌 JPEG 预览 |
 | `--fast` | - | false | 快速解码：线性去马赛克 + 半分辨率，仅对 rawpy 解码路径生效（约 8-10x 加速） |
 | `--workers` | `-j` | `min(CPU核数, 4)` | 并行处理线程数，`-j 1` 表示串行 |
+
+### svg 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | SVG 文件所在目录 |
+| `--recursive` / `--no-recursive` | `-r` | `--recursive` | 是否递归处理子目录 |
+| `--scale` | `-s` | 2.0 | 输出缩放比例（1.0 为 SVG 原始像素；高 DPI 屏建议 2.0 或更高） |
+| `--overwrite` / `--no-overwrite` | - | `--overwrite` | 是否覆盖已存在的同名 PNG |
+| `--font-family` | - | 跨平台 CJK 字体栈 | 覆盖 SVG 文本字体（CSS font-family 语法）；传空串 `""` 禁用注入 |
+| `--workers` | `-j` | `min(CPU核数, 4)` | 并行处理线程数，`-j 1` 表示串行 |
+
+PNG 与源 SVG 同目录、同名（仅扩展名不同），保持原有目录结构不变。
+
+### svg 中文渲染
+
+cairosvg 基于 cairo/fontconfig 选字体：如果 SVG 声明的 `font-family`（例如 `Arial` / `serif`）在当前系统上解析到的字体不含 CJK 字形，中文就会被渲染成方块（豆腐 □）。
+
+`svg` 子命令默认会向源 SVG 注入一段内联 CSS，把 `<text> / <tspan> / <textPath>` 的 `font-family` 以 `!important` 覆盖为跨平台 CJK 字体栈（macOS 的 PingFang / Hiragino、Windows 的 YaHei / SimHei、Linux 的 Noto CJK / Source Han / WenQuanYi，最后兜底 `sans-serif`），从而绕过原 SVG 指定但缺少 CJK 字形的字体。
+
+- 希望完全保留 SVG 原始字体：`--font-family ""`
+- 想指定具体字体：`--font-family '"Noto Sans CJK SC", sans-serif'`
+
+> 注意：注入仅对 SVG 的 `<style>` 规则生效；若原 SVG 使用 `<image>` 嵌入了位图文字，则此参数无法修复。
 
 ### raw 转换策略
 
@@ -607,4 +635,13 @@ qxw-image raw -d ~/Photos -r
 
 # 指定输出目录并覆盖已有文件
 qxw-image raw -d ~/Photos -o ~/Photos/converted --overwrite
+
+# 将 assets 目录所有 SVG 批量转成同名 PNG（递归、2x 缩放）
+qxw-image svg -d ./assets
+
+# 仅处理当前目录、1x 输出，跳过已有 PNG
+qxw-image svg --no-recursive -s 1.0 --no-overwrite
+
+# 中文渲染成方块时：默认策略已修复；如需指定字体可显式覆盖
+qxw-image svg --font-family '"Noto Sans CJK SC", sans-serif'
 ```

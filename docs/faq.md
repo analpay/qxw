@@ -58,6 +58,16 @@ export LANG=en_US.UTF-8
 
 在 TUI 界面中按 `D` 键切换。
 
+### Q: qxw-image svg 转出来的 PNG 中文全是方块（□）
+
+cairosvg 按 SVG 声明的 `font-family` 选字体，若该字体不含 CJK 字形，中文就会渲染成方块。`svg` 子命令默认会向 SVG 注入 CSS，把文本字体强制覆盖为跨平台 CJK 字体栈（PingFang / YaHei / Noto CJK 等），已经可修复绝大多数场景。
+
+若仍有问题：
+
+- 指定你本机实际安装的 CJK 字体：`qxw-image svg --font-family '"Noto Sans CJK SC", sans-serif'`
+- 检查系统是否安装了任一 CJK 字体（macOS 一般自带 PingFang SC；Linux 可安装 `fonts-noto-cjk`）
+- 如果 SVG 是把文字当 `<image>` 位图嵌入的，则此选项无效，需要回到设计工具导出矢量文字
+
 ## 开发相关
 
 ### Q: 如何添加新命令

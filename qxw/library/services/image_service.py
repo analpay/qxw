@@ -48,6 +48,9 @@ IMAGE_EXTENSIONS = frozenset(
 # Live Photo 关联的视频格式
 VIDEO_EXTENSIONS = frozenset({".mov", ".mp4"})
 
+# SVG 矢量图格式
+SVG_EXTENSIONS = frozenset({".svg"})
+
 # 默认参数
 DEFAULT_THUMB_SIZE = (400, 400)
 DEFAULT_THUMB_QUALITY = 85
@@ -147,6 +150,25 @@ def scan_images(directory: Path, recursive: bool = True) -> list[ImageEntry]:
     return entries
 
 
+def scan_svg_files(directory: Path, recursive: bool = True) -> list[Path]:
+    """扫描目录获取所有 SVG 文件
+
+    Args:
+        directory: 要扫描的目录
+        recursive: 是否递归扫描子目录
+
+    Returns:
+        按文件名排序的 SVG 文件路径列表
+    """
+    directory = directory.resolve()
+    all_files = list(directory.rglob("*")) if recursive else list(directory.iterdir())
+    svg_files = [
+        f for f in all_files
+        if f.is_file() and f.suffix.lower() in SVG_EXTENSIONS and not f.name.startswith(".")
+    ]
+    return sorted(svg_files, key=lambda x: x.name.lower())
+
+
 def scan_raw_files(directory: Path, recursive: bool = False) -> list[Path]:
     """扫描目录获取所有 RAW 文件
 
@@ -235,6 +257,84 @@ def convert_raw(
         rgb = raw.postprocess(**postprocess_kwargs)
 
     Image.fromarray(rgb).save(str(output_path), "JPEG", quality=quality, progressive=True)
+
+
+# ============================================================
+# SVG 转 PNG
+# ============================================================
+
+
+# 跨平台 CJK 字体栈：macOS(PingFang/Hiragino) → Windows(YaHei/SimHei)
+# → Linux(Noto/Source Han/WenQuanYi) → 通用 sans-serif 兜底
+DEFAULT_SVG_CJK_FONT_FAMILY = (
+    '"PingFang SC", "PingFang TC", "Hiragino Sans GB", "Heiti SC", '
+    '"Microsoft YaHei", "SimHei", '
+    '"Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", '
+    '"WenQuanYi Zen Hei", "WenQuanYi Micro Hei", sans-serif'
+)
+
+
+def _inject_svg_font_family(svg_bytes: bytes, font_family: str) -> bytes:
+    """在 SVG 根节点开头注入 CSS，把 text/tspan 的 font-family 覆盖为含 CJK 字形的字体栈
+
+    使用 `!important` 覆盖内联 style 与 presentation 属性，确保即使 SVG 声明了
+    缺少 CJK 字形的字体也能正确回退渲染。若 SVG 中找不到 <svg ...> 根节点则原样返回。
+    """
+    import re
+
+    try:
+        svg_text = svg_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        svg_text = svg_bytes.decode("utf-8", errors="replace")
+
+    match = re.search(r"<svg\b[^>]*>", svg_text, flags=re.IGNORECASE)
+    if not match:
+        return svg_bytes
+
+    css_block = (
+        "<style type=\"text/css\"><![CDATA["
+        f"text, tspan, textPath {{ font-family: {font_family} !important; }}"
+        "]]></style>"
+    )
+    insert_at = match.end()
+    patched = svg_text[:insert_at] + css_block + svg_text[insert_at:]
+    return patched.encode("utf-8")
+
+
+def convert_svg_to_png(
+    svg_path: Path,
+    output_path: Path,
+    scale: float = 2.0,
+    font_family: str | None = None,
+) -> None:
+    """将 SVG 文件转换为 PNG
+
+    使用 cairosvg 按给定缩放比例栅格化 SVG；当 SVG 未声明 width/height 时
+    cairosvg 会按默认视口渲染，再乘以 scale 得到最终像素尺寸。
+
+    为避免中文等 CJK 字符渲染成方块（豆腐），默认会向 SVG 注入一段 CSS，
+    把 text/tspan 的 font-family 强制覆盖为跨平台的 CJK 字体栈。
+
+    Args:
+        svg_path: SVG 文件路径
+        output_path: 输出 PNG 路径
+        scale: 输出缩放比例（默认 2.0 适配高 DPI 屏）
+        font_family: 自定义字体栈（CSS font-family 语法）。传入空串可禁用注入。
+
+    Raises:
+        ImportError: cairosvg 未安装
+        Exception: 转换失败
+    """
+    import cairosvg
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    stack = DEFAULT_SVG_CJK_FONT_FAMILY if font_family is None else font_family
+    if stack:
+        svg_bytes = _inject_svg_font_family(svg_path.read_bytes(), stack)
+        cairosvg.svg2png(bytestring=svg_bytes, write_to=str(output_path), scale=scale)
+    else:
+        cairosvg.svg2png(url=str(svg_path), write_to=str(output_path), scale=scale)
 
 
 # ============================================================

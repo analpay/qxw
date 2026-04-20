@@ -1,12 +1,13 @@
 """qxw-image 命令入口
 
-图片工具集，支持图片浏览 HTTP 服务和 RAW 批量转换。
+图片工具集，支持图片浏览 HTTP 服务、RAW 批量转换以及 SVG 转 PNG。
 
 用法:
     qxw-image http                        # 启动图片浏览服务（默认 8080 端口）
     qxw-image http --dir ~/Photos         # 指定图片目录
     qxw-image raw                         # 将当前目录 RAW 文件批量转换为 JPG
     qxw-image raw -d ~/Photos -r          # 递归处理子目录
+    qxw-image svg                         # 将当前目录 SVG 文件批量转换为 PNG
     qxw-image --help                      # 查看帮助
 """
 
@@ -64,6 +65,13 @@ def _require_rawpy() -> None:
         import rawpy  # noqa: F401
     except ImportError:
         raise QxwError('需要安装 rawpy 库: pip install rawpy 或 pip install "qxw[image]"') from None
+
+
+def _require_cairosvg() -> None:
+    try:
+        import cairosvg  # noqa: F401
+    except ImportError:
+        raise QxwError('需要安装 cairosvg 库: pip install cairosvg 或 pip install "qxw[image]"') from None
 
 
 # ============================================================
@@ -441,7 +449,7 @@ class _ImageServerHandler(BaseHTTPRequestHandler):
 
 @click.group(
     name="qxw-image",
-    help="QXW 图片工具集（HTTP 图片浏览 / RAW 批量转换）",
+    help="QXW 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG）",
     epilog="使用 qxw-image <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
@@ -670,6 +678,179 @@ def raw_command(
             console=console,
         ) as progress:
             task_id = progress.add_task("转换中...", total=len(raw_files))
+            if skip_count:
+                progress.advance(task_id, skip_count)
+
+            if workers == 1 or len(tasks) <= 1:
+                for item in tasks:
+                    src, err = _run_one(item)
+                    if err is None:
+                        success_count += 1
+                    else:
+                        logger.warning("转换失败 %s: %s", src.name, err)
+                        fail_count += 1
+                    progress.advance(task_id)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [pool.submit(_run_one, item) for item in tasks]
+                    for future in as_completed(futures):
+                        src, err = future.result()
+                        if err is None:
+                            success_count += 1
+                        else:
+                            logger.warning("转换失败 %s: %s", src.name, err)
+                            fail_count += 1
+                        progress.advance(task_id)
+
+        console.print()
+        console.print(f"✅ 转换完成: [green]{success_count}[/] 成功", end="")
+        if skip_count:
+            console.print(f"，[yellow]{skip_count}[/] 跳过（已存在）", end="")
+        if fail_count:
+            console.print(f"，[red]{fail_count}[/] 失败", end="")
+        console.print()
+
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="svg", help="将目录中的 SVG 文件批量转换为同名 PNG（同目录输出）")
+@click.option("--dir", "-d", "directory", default=".", show_default=True, help="SVG 文件所在目录")
+@click.option("--recursive/--no-recursive", "-r", default=True, show_default=True, help="是否递归处理子目录")
+@click.option("--scale", "-s", default=2.0, show_default=True, type=float, help="输出缩放比例（1.0 为原始像素）")
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=True,
+    show_default=True,
+    help="是否覆盖已存在的同名 PNG（默认覆盖）",
+)
+@click.option(
+    "--font-family",
+    "font_family",
+    default=None,
+    help="覆盖 SVG 文本字体（CSS font-family 语法）；默认注入跨平台 CJK 字体栈避免中文变方块；传空串禁用注入",
+)
+@click.option(
+    "--workers",
+    "-j",
+    default=None,
+    type=int,
+    help="并行处理线程数（默认 min(CPU 核数, 4)；-j 1 表示串行）",
+)
+def svg_command(
+    directory: str,
+    recursive: bool,
+    scale: float,
+    overwrite: bool,
+    font_family: str | None,
+    workers: int | None,
+) -> None:
+    """将 SVG 文件批量转换为同名 PNG
+
+    扫描目录中的 `.svg` 文件，使用 cairosvg 按指定缩放比例栅格化为 PNG，
+    结果输出到 SVG 所在目录（同名不同后缀）。
+
+    \b
+    中文渲染:
+        默认会向 SVG 注入一段 CSS，把 text/tspan 的 font-family 覆盖为含 CJK
+        字形的跨平台字体栈（PingFang / YaHei / Noto CJK / Source Han 等），
+        避免中文、日韩文字被渲染成方块（豆腐）。若希望保留 SVG 原始 font-family，
+        可传 --font-family ""（空串）禁用注入。
+
+    \b
+    示例:
+        qxw-image svg                          # 转换当前目录（含子目录）的 SVG
+        qxw-image svg -d ./assets              # 指定目录
+        qxw-image svg --no-recursive           # 仅处理当前目录
+        qxw-image svg -s 1.0                   # 1x 输出（默认 2x 适配高 DPI 屏）
+        qxw-image svg --no-overwrite           # 跳过已存在的 PNG
+        qxw-image svg --font-family '"Noto Sans CJK SC", sans-serif'  # 自定义字体栈
+        qxw-image svg --font-family ""         # 禁用 CJK 字体注入
+        qxw-image svg -j 8                     # 使用 8 个线程并行处理
+    """
+    try:
+        _require_cairosvg()
+
+        from qxw.library.services.image_service import (
+            DEFAULT_SVG_CJK_FONT_FAMILY,
+            convert_svg_to_png,
+            scan_svg_files,
+        )
+
+        dir_path = Path(directory).resolve()
+        if not dir_path.is_dir():
+            raise click.BadParameter(f"目录不存在: {directory}")
+
+        if scale <= 0:
+            raise click.BadParameter(f"--scale 必须为正数: {scale}")
+
+        if workers is None:
+            workers = min(os.cpu_count() or 4, 4)
+        workers = max(1, workers)
+
+        if font_family is None:
+            font_summary = "默认 CJK 字体栈（避免中文变方块）"
+        elif font_family == "":
+            font_summary = "未注入（使用 SVG 原始 font-family）"
+        else:
+            font_summary = font_family
+
+        console.print(f"🖼️  [bold]QXW SVG → PNG[/] v{__version__}")
+        console.print(f"📁 源目录: [cyan]{dir_path}[/]")
+        console.print(f"🔁 递归子目录: {'是' if recursive else '否'}")
+        console.print(f"🔍 缩放比例: {scale}x")
+        console.print(f"♻️  覆盖模式: {'覆盖' if overwrite else '跳过已存在'}")
+        console.print(f"🔤 字体策略: {font_summary}")
+        console.print(f"🧵 并行线程: {workers}")
+        console.print()
+
+        effective_font = DEFAULT_SVG_CJK_FONT_FAMILY if font_family is None else font_family
+
+        svg_files = scan_svg_files(dir_path, recursive=recursive)
+        if not svg_files:
+            console.print("📭 未找到 SVG 文件")
+            return
+
+        console.print(f"🔍 找到 [bold]{len(svg_files)}[/] 个 SVG 文件\n")
+
+        tasks: list[tuple[Path, Path]] = []
+        skip_count = 0
+        for svg_file in svg_files:
+            dest = svg_file.with_suffix(".png")
+            if dest.exists() and not overwrite:
+                skip_count += 1
+                continue
+            tasks.append((svg_file, dest))
+
+        success_count = 0
+        fail_count = 0
+
+        def _run_one(item: tuple[Path, Path]) -> tuple[Path, Exception | None]:
+            src, dst = item
+            try:
+                convert_svg_to_png(src, dst, scale=scale, font_family=effective_font)
+                return src, None
+            except Exception as e:
+                return src, e
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("转换中...", total=len(svg_files))
             if skip_count:
                 progress.advance(task_id, skip_count)
 
