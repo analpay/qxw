@@ -172,6 +172,9 @@ qxw-image http -d ~/Photos
 # 将相机 RAW 文件批量转换为 JPG（输出到源目录下的 jpg/）
 qxw-image raw -d ~/Photos -r
 
+# 导出 RAW 时套用富士 Classic Chrome 滤镜（自动走 rawpy 解码 + 调色）
+qxw-image raw -d ~/Photos --filter fuji-cc
+
 # 将目录下所有 SVG 批量转成同名 PNG（默认递归、2x 缩放、覆盖同名文件、白底）
 qxw-image svg -d ./assets
 

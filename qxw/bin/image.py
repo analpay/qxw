@@ -574,13 +574,29 @@ def http_command(
     help="快速解码模式：线性去马赛克 + 半分辨率，仅对 rawpy 解码路径生效（约 8-10x 加速）",
 )
 @click.option(
+    "--filter",
+    "color_filter",
+    default="default",
+    show_default=True,
+    help=(
+        "调色滤镜插件名（可通过 qxw.library.services.color_filters.register_filter 扩展）。"
+        "default=不调色、对 --use-embedded/--no-use-embedded 无影响；"
+        "任意其他值会强制走 --no-use-embedded 解码路径，"
+        "若同时显式指定了 --use-embedded 则直接报错退出。"
+        "内置: fuji-cc（富士 Classic Chrome 胶片模拟近似）、"
+        "ghibli（吉卜力动画水彩风近似：抬黑压白 + 暖调 + 柔和天空蓝 + 暖绿）。"
+    ),
+)
+@click.option(
     "--workers",
     "-j",
     default=None,
     type=int,
     help="并行处理线程数（默认 min(CPU 核数, 4)；-j 1 表示串行）",
 )
+@click.pass_context
 def raw_command(
+    ctx: click.Context,
     directory: str,
     output_dir: str | None,
     recursive: bool,
@@ -588,6 +604,7 @@ def raw_command(
     overwrite: bool,
     use_embedded: bool,
     fast: bool,
+    color_filter: str,
     workers: int | None,
 ) -> None:
     """将 RAW 图片批量转换为 JPG
@@ -609,17 +626,46 @@ def raw_command(
         qxw-image raw -q 95 --overwrite        # 高质量 + 覆盖已有文件
         qxw-image raw --no-use-embedded        # 跳过嵌入预览，强制 rawpy 解码
         qxw-image raw --no-use-embedded --fast # 解码路径下再叠加半分辨率 + 线性去马赛克
+        qxw-image raw --filter fuji-cc         # 套用富士 Classic Chrome 滤镜（自动 --no-use-embedded）
         qxw-image raw -j 8                     # 使用 8 个线程并行处理
     """
     try:
         _require_pillow()
         _require_rawpy()
 
+        from qxw.library.services.color_filters import (
+            DEFAULT_FILTER_NAME,
+            list_filters,
+        )
         from qxw.library.services.image_service import convert_raw, scan_raw_files
 
         dir_path = Path(directory).resolve()
         if not dir_path.is_dir():
             raise click.BadParameter(f"目录不存在: {directory}")
+
+        # 校验滤镜名
+        color_filter_norm = (color_filter or "").strip().lower()
+        available_filters = list_filters()
+        if color_filter_norm not in available_filters:
+            raise click.BadParameter(
+                f"未知的调色滤镜: {color_filter!r}。可选: {', '.join(available_filters)}",
+                param_hint="--filter",
+            )
+
+        # 按需求处理滤镜与 --use-embedded 的互斥关系：
+        # - default：保持历史行为，不改变 use_embedded
+        # - 非 default：
+        #     * 若用户显式传入 --use-embedded，直接报错退出（避免静默覆盖用户意图）
+        #     * 否则强制 use_embedded = False
+        filter_enabled = color_filter_norm != DEFAULT_FILTER_NAME
+        if filter_enabled:
+            src = ctx.get_parameter_source("use_embedded")
+            if src == click.core.ParameterSource.COMMANDLINE and use_embedded:
+                raise click.UsageError(
+                    f"--filter {color_filter_norm} 需要对解码后的像素调色，"
+                    "与 --use-embedded 互斥。请移除 --use-embedded 或改用 --no-use-embedded。"
+                )
+            use_embedded = False
 
         out_path = Path(output_dir).resolve() if output_dir else dir_path / "jpg"
 
@@ -634,7 +680,12 @@ def raw_command(
         if use_embedded:
             console.print("🎨 嵌入预览: [green]优先使用[/]（与相机直出色彩一致）")
         else:
-            console.print("🎨 嵌入预览: [yellow]已禁用[/]（强制 rawpy 解码）")
+            if filter_enabled:
+                console.print("🎨 嵌入预览: [yellow]已禁用[/]（调色需解码路径，自动切换）")
+            else:
+                console.print("🎨 嵌入预览: [yellow]已禁用[/]（强制 rawpy 解码）")
+        if filter_enabled:
+            console.print(f"🎛️  调色滤镜: [magenta]{color_filter_norm}[/]")
         if fast:
             console.print("⚡ 快速模式: [green]已启用[/]（半分辨率 + 线性去马赛克，仅解码路径生效）")
         console.print(f"🧵 并行线程: {workers}")
@@ -664,7 +715,14 @@ def raw_command(
         def _run_one(item: tuple[Path, Path]) -> tuple[Path, Exception | None]:
             src, dst = item
             try:
-                convert_raw(src, dst, quality=quality, use_embedded=use_embedded, fast=fast)
+                convert_raw(
+                    src,
+                    dst,
+                    quality=quality,
+                    use_embedded=use_embedded,
+                    fast=fast,
+                    color_filter=color_filter_norm,
+                )
                 return src, None
             except Exception as e:
                 return src, e
@@ -710,6 +768,8 @@ def raw_command(
             console.print(f"，[red]{fail_count}[/] 失败", end="")
         console.print()
 
+    except click.UsageError:
+        raise  # 交给 click 自己做格式化输出和退出码（默认 2）
     except QxwError as e:
         logger.error("命令执行失败: %s", e.message)
         click.echo(f"错误: {e.message}", err=True)

@@ -199,6 +199,7 @@ def convert_raw(
     quality: int = DEFAULT_JPEG_QUALITY,
     use_embedded: bool = True,
     fast: bool = False,
+    color_filter: str = "default",
 ) -> None:
     """将 RAW 文件转换为 JPG
 
@@ -214,6 +215,11 @@ def convert_raw(
         use_embedded: 是否优先使用相机内嵌 JPEG 预览。关闭时始终走 rawpy 解码。
         fast: 启用快速解码（线性去马赛克 + 半分辨率），约 8-10x 加速，
             仅对 rawpy 解码路径生效；嵌入预览路径始终写入原字节，不受影响。
+        color_filter: 调色滤镜名。``default`` 表示不调色（保留历史行为）；
+            其他值将在 rawpy 解码后对 RGB 数组套用对应滤镜。调色依赖像素级
+            访问，与嵌入预览路径互斥；当 ``color_filter`` 非 ``default`` 时，
+            即使 ``use_embedded=True`` 也会自动走 rawpy 解码路径（CLI 层负责
+            拦截用户显式指定 ``--use-embedded`` 的情况）。
 
     Raises:
         ImportError: rawpy 或 Pillow 未安装
@@ -224,10 +230,15 @@ def convert_raw(
     import rawpy
     from PIL import Image
 
+    from qxw.library.services.color_filters import apply_filter, get_filter
+
+    filter_fn = get_filter(color_filter)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with rawpy.imread(str(raw_path)) as raw:
-        if use_embedded:
+        # 仅当未启用调色时才允许走嵌入预览（原字节直写，无法套用滤镜）
+        if use_embedded and filter_fn is None:
             # 优先使用相机内置的 JPEG 预览，与相机直出色彩一致
             thumb = None
             try:
@@ -255,6 +266,9 @@ def convert_raw(
             postprocess_kwargs["half_size"] = True
 
         rgb = raw.postprocess(**postprocess_kwargs)
+
+    if filter_fn is not None:
+        rgb = apply_filter(rgb, color_filter)
 
     Image.fromarray(rgb).save(str(output_path), "JPEG", quality=quality, progressive=True)
 
