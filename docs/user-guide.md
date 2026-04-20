@@ -584,6 +584,7 @@ qxw-image svg
 | `--scale` | `-s` | 2.0 | 输出缩放比例（1.0 为 SVG 原始像素；高 DPI 屏建议 2.0 或更高） |
 | `--overwrite` / `--no-overwrite` | - | `--overwrite` | 是否覆盖已存在的同名 PNG |
 | `--font-family` | - | 跨平台 CJK 字体栈 | 覆盖 SVG 文本字体（CSS font-family 语法）；传空串 `""` 禁用注入 |
+| `--background` | `-b` | `white` | PNG 背景预设：`white`（纯白 `#ffffff`）/ `transparent`（透明）/ `dark`（深色 `#0f172a`） |
 | `--workers` | `-j` | `min(CPU核数, 4)` | 并行处理线程数，`-j 1` 表示串行 |
 
 PNG 与源 SVG 同目录、同名（仅扩展名不同），保持原有目录结构不变。
@@ -644,4 +645,10 @@ qxw-image svg --no-recursive -s 1.0 --no-overwrite
 
 # 中文渲染成方块时：默认策略已修复；如需指定字体可显式覆盖
 qxw-image svg --font-family '"Noto Sans CJK SC", sans-serif'
+
+# 输出透明底 PNG（默认是白底）
+qxw-image svg -b transparent
+
+# 输出深色底 PNG（#0f172a），适合贴到深色文档 / 幻灯片
+qxw-image svg -b dark
 ```

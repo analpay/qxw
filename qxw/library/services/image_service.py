@@ -306,6 +306,7 @@ def convert_svg_to_png(
     output_path: Path,
     scale: float = 2.0,
     font_family: str | None = None,
+    background_color: str | None = None,
 ) -> None:
     """将 SVG 文件转换为 PNG
 
@@ -320,6 +321,7 @@ def convert_svg_to_png(
         output_path: 输出 PNG 路径
         scale: 输出缩放比例（默认 2.0 适配高 DPI 屏）
         font_family: 自定义字体栈（CSS font-family 语法）。传入空串可禁用注入。
+        background_color: 背景色（CSS 颜色，如 "#ffffff"）。为 None 或空串则保持透明。
 
     Raises:
         ImportError: cairosvg 未安装
@@ -329,12 +331,17 @@ def convert_svg_to_png(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    bg = background_color or None
     stack = DEFAULT_SVG_CJK_FONT_FAMILY if font_family is None else font_family
     if stack:
         svg_bytes = _inject_svg_font_family(svg_path.read_bytes(), stack)
-        cairosvg.svg2png(bytestring=svg_bytes, write_to=str(output_path), scale=scale)
+        cairosvg.svg2png(
+            bytestring=svg_bytes, write_to=str(output_path), scale=scale, background_color=bg
+        )
     else:
-        cairosvg.svg2png(url=str(svg_path), write_to=str(output_path), scale=scale)
+        cairosvg.svg2png(
+            url=str(svg_path), write_to=str(output_path), scale=scale, background_color=bg
+        )
 
 
 # ============================================================

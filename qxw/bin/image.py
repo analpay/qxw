@@ -740,6 +740,15 @@ def raw_command(
     help="覆盖 SVG 文本字体（CSS font-family 语法）；默认注入跨平台 CJK 字体栈避免中文变方块；传空串禁用注入",
 )
 @click.option(
+    "--background",
+    "-b",
+    "background",
+    type=click.Choice(["white", "transparent", "dark"], case_sensitive=False),
+    default="white",
+    show_default=True,
+    help="PNG 背景：white（纯白 #ffffff，默认）/ transparent（透明）/ dark（深色 #0f172a）",
+)
+@click.option(
     "--workers",
     "-j",
     default=None,
@@ -752,6 +761,7 @@ def svg_command(
     scale: float,
     overwrite: bool,
     font_family: str | None,
+    background: str,
     workers: int | None,
 ) -> None:
     """将 SVG 文件批量转换为同名 PNG
@@ -775,6 +785,8 @@ def svg_command(
         qxw-image svg --no-overwrite           # 跳过已存在的 PNG
         qxw-image svg --font-family '"Noto Sans CJK SC", sans-serif'  # 自定义字体栈
         qxw-image svg --font-family ""         # 禁用 CJK 字体注入
+        qxw-image svg -b transparent           # 输出透明底 PNG（默认为白底）
+        qxw-image svg -b dark                  # 输出深色底 PNG（#0f172a）
         qxw-image svg -j 8                     # 使用 8 个线程并行处理
     """
     try:
@@ -804,12 +816,22 @@ def svg_command(
         else:
             font_summary = font_family
 
+        bg_key = background.lower()
+        bg_map = {"transparent": None, "white": "#ffffff", "dark": "#0f172a"}
+        bg_color = bg_map[bg_key]
+        bg_summary = {
+            "transparent": "透明",
+            "white": "白色 (#ffffff)",
+            "dark": "深色 (#0f172a)",
+        }[bg_key]
+
         console.print(f"🖼️  [bold]QXW SVG → PNG[/] v{__version__}")
         console.print(f"📁 源目录: [cyan]{dir_path}[/]")
         console.print(f"🔁 递归子目录: {'是' if recursive else '否'}")
         console.print(f"🔍 缩放比例: {scale}x")
         console.print(f"♻️  覆盖模式: {'覆盖' if overwrite else '跳过已存在'}")
         console.print(f"🔤 字体策略: {font_summary}")
+        console.print(f"🎨 背景: {bg_summary}")
         console.print(f"🧵 并行线程: {workers}")
         console.print()
 
@@ -837,7 +859,9 @@ def svg_command(
         def _run_one(item: tuple[Path, Path]) -> tuple[Path, Exception | None]:
             src, dst = item
             try:
-                convert_svg_to_png(src, dst, scale=scale, font_family=effective_font)
+                convert_svg_to_png(
+                    src, dst, scale=scale, font_family=effective_font, background_color=bg_color
+                )
                 return src, None
             except Exception as e:
                 return src, e
