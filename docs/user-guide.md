@@ -15,6 +15,7 @@
 | `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
 | `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
 | `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG） | ✅ 可用 |
+| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配） | ✅ 可用 |
 
 ## qxw
 
@@ -651,4 +652,121 @@ qxw-image svg -b transparent
 
 # 输出深色底 PNG（#0f172a），适合贴到深色文档 / 幻灯片
 qxw-image svg -b dark
+```
+
+## qxw-markdown
+
+Markdown 文档工具集。目前提供 `wx` 子命令，用于将 Markdown 中的 PlantUML 代码围栏本地渲染为图片，并生成一份可直接粘贴到微信公众号编辑器的 `_wx.md` 副本。
+
+### 渲染依赖
+
+本命令通过本地 `plantuml.jar`（subprocess 调用 `java -jar ...`）进行渲染，Python 负责协调、中文字体注入与格式转换。首次使用前需要：
+
+1. 安装 Java 运行时（JRE/JDK，建议 8+，执行 `java -version` 能输出版本即可）
+2. 下载 [plantuml.jar](https://plantuml.com/download)，放到 `~/.config/qxw/plantuml.jar`（或通过环境变量 `PLANTUML_JAR` / 命令行 `--plantuml-jar` 指定）
+3. SVG/PNG/JPG 的后处理依赖 Pillow + cairosvg，已随 `pip install qxw` 默认安装
+
+### 基本用法
+
+```bash
+# 生成 docs/foo_wx.md + docs/foo_1.png / foo_2.png ...（默认白底 PNG）
+qxw-markdown wx docs/foo.md
+
+# 透明底 SVG
+qxw-markdown wx docs/foo.md -f svg -b transparent
+
+# 黑底 JPG + 高质量
+qxw-markdown wx docs/foo.md -f jpg -b black -q 95
+```
+
+### 子命令说明
+
+| 子命令 | 说明 |
+|--------|------|
+| `wx`   | 把 Markdown 中的 PlantUML 代码围栏替换为本地图片引用，生成 `_wx.md` 副本 |
+
+### wx 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `<markdown_file>` | - | - | 要处理的源 Markdown 文件（位置参数，必填） |
+| `--format` | `-f` | `png` | 输出图片格式：`png` / `svg` / `jpg` |
+| `--background` | `-b` | `white` | 图片背景：`white` / `black` / `transparent` |
+| `--output` | `-o` | `<源>_wx.md` | 输出 Markdown 路径（默认与源同目录） |
+| `--plantuml-jar` | - | `$PLANTUML_JAR` 或 `~/.config/qxw/plantuml.jar` | plantuml.jar 路径 |
+| `--java` | - | `java` | java 可执行文件名或完整路径 |
+| `--scale` | `-s` | 2.0 | PNG/JPG 的输出缩放比例（SVG 忽略） |
+| `--font-family` | - | 跨平台 CJK 字体栈 | 覆盖 SVG 文本字体；传空串 `""` 禁用注入 |
+| `--plantuml-font` | - | `PingFang SC` | 注入到 `skinparam defaultFontName` 的字体名 |
+| `--quality` | `-q` | 92 | JPG 压缩质量（1-100），仅 `--format jpg` 生效 |
+
+### 识别的 PlantUML 代码围栏
+
+Markdown 中以下三种语言标识都会被识别，且会保留围栏出现顺序用作图片序号：
+
+````markdown
+```plantuml
+@startuml
+Alice -> Bob : 你好
+@enduml
+```
+
+```puml
+...
+```
+
+```uml
+...
+```
+````
+
+裸的 `@startuml ... @enduml`（不在代码围栏内）不会被处理，避免误伤正文中的 PlantUML 代码示例。
+
+### 输出文件命名
+
+给定源 `docs/foo.md`，默认会在同目录生成：
+
+```
+docs/foo_wx.md      # 新 Markdown，代码围栏被替换为 ![](./foo_1.png)
+docs/foo_1.png      # 第 1 段 PlantUML 渲染结果
+docs/foo_2.png      # 第 2 段 ...
+```
+
+图片扩展名随 `--format` 变化为 `.svg` 或 `.jpg`。
+
+### 中文渲染
+
+为避免中文在最终图片里被渲染成方块，命令使用两道保险：
+
+1. 在 PlantUML 源码注入 `skinparam defaultFontName`（默认 `PingFang SC`，可通过 `--plantuml-font` 覆盖），给 Java 端一个优先尝试的字体名
+2. 对 plantuml.jar 产出的 SVG 注入 CSS，把 `<text> / <tspan> / <textPath>` 的 `font-family` 强制覆盖为跨平台 CJK 字体栈（PingFang / YaHei / Noto / Source Han / WenQuanYi 兜底）
+
+三种目标格式（SVG / PNG / JPG）都会先经过 SVG 中间态做字体注入，因此不依赖 Java 端 fontconfig 是否能正确解析到 CJK 字体。
+
+### 背景色
+
+- `white`：注入 `skinparam backgroundColor white`；SVG 额外追加全尺寸白色 `<rect>` 作为底层兜底
+- `black`：注入 `skinparam backgroundColor black`；**注意**：PlantUML 默认 skin 的文字/箭头是深色，在黑底上可能不可见，建议在源码里配合 `!theme cyborg` 等深色主题使用
+- `transparent`：注入 `skinparam backgroundColor transparent`；PNG 保留透明通道；JPG 因格式限制会落成白底并在日志输出告警
+
+### 使用示例
+
+```bash
+# 默认：白底 PNG
+qxw-markdown wx docs/article.md
+
+# 透明底 SVG，适合贴到任意背景的幻灯片
+qxw-markdown wx docs/article.md -f svg -b transparent
+
+# 黑底 JPG（记得在 PlantUML 里加 !theme cyborg 之类的深色主题）
+qxw-markdown wx docs/article.md -f jpg -b black -q 95
+
+# 临时指定 plantuml.jar 路径
+qxw-markdown wx docs/article.md --plantuml-jar ~/bin/plantuml.jar
+
+# 自定义 CJK 字体栈
+qxw-markdown wx docs/article.md --font-family '"Noto Sans CJK SC", sans-serif'
+
+# 禁用字体注入（保留 plantuml.jar 原始 SVG）
+qxw-markdown wx docs/article.md --font-family ""
 ```

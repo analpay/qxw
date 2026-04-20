@@ -181,7 +181,25 @@ qxw-image svg -d ./assets -b transparent
 
 浏览器打开 http://127.0.0.1:8080 即可浏览图片画廊，点击缩略图查看原图，支持 Live Photo 播放。
 
-## 10. 下一步
+## 10. Markdown → 公众号适配
+
+将 Markdown 里的 PlantUML 代码围栏本地渲染为图片，并生成一份可直接粘贴到微信公众号编辑器的 `_wx.md` 副本（渲染走本地 `plantuml.jar`，需要先装好 Java 运行时）。
+
+```bash
+# 一次性准备：下载 plantuml.jar 到默认位置
+mkdir -p ~/.config/qxw
+curl -L https://github.com/plantuml/plantuml/releases/download/v1.2024.7/plantuml-1.2024.7.jar \
+  -o ~/.config/qxw/plantuml.jar
+
+# 生成 docs/article_wx.md + docs/article_1.png / article_2.png ...（默认白底 PNG）
+qxw-markdown wx docs/article.md
+
+# 透明底 SVG / 黑底 JPG 等
+qxw-markdown wx docs/article.md -f svg -b transparent
+qxw-markdown wx docs/article.md -f jpg -b black -q 95
+```
+
+## 11. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

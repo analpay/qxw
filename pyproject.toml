@@ -53,6 +53,7 @@ qxw-gitbook = "qxw.bin.gitbook:main"
 qxw-webtool = "qxw.bin.webtool:main"
 qxw-file-server = "qxw.bin.file_server:main"
 qxw-image = "qxw.bin.image:main"
+qxw-markdown = "qxw.bin.markdown:main"
 
 [tool.setuptools.packages.find]
 include = ["qxw*"]
