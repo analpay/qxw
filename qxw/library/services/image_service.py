@@ -175,18 +175,23 @@ def convert_raw(
     raw_path: Path,
     output_path: Path,
     quality: int = DEFAULT_JPEG_QUALITY,
+    use_embedded: bool = True,
+    fast: bool = False,
 ) -> None:
     """将 RAW 文件转换为 JPG
 
-    优先提取 RAW 文件内嵌的 JPEG 预览（相机直出色彩、色调曲线与
+    默认优先提取 RAW 文件内嵌的 JPEG 预览（相机直出色彩、色调曲线与
     Finder/Preview 显示一致）；嵌入预览缺失或尺寸过小时，退化为
     rawpy 重新解码（sRGB/8bit/相机白平衡/自动亮度）。
 
     Args:
         raw_path: RAW 文件路径
         output_path: 输出 JPG 路径
-        quality: JPEG 压缩质量 (1-100)。仅在 rawpy 解码退化路径下生效；
+        quality: JPEG 压缩质量 (1-100)。仅在 rawpy 解码路径下生效；
             使用相机嵌入预览时直接沿用原始 JPEG 字节，保留相机直出画质与 EXIF。
+        use_embedded: 是否优先使用相机内嵌 JPEG 预览。关闭时始终走 rawpy 解码。
+        fast: 启用快速解码（线性去马赛克 + 半分辨率），约 8-10x 加速，
+            仅对 rawpy 解码路径生效；嵌入预览路径始终写入原字节，不受影响。
 
     Raises:
         ImportError: rawpy 或 Pillow 未安装
@@ -200,28 +205,34 @@ def convert_raw(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with rawpy.imread(str(raw_path)) as raw:
-        # 优先使用相机内置的 JPEG 预览，与相机直出色彩一致
-        thumb = None
-        try:
-            thumb = raw.extract_thumb()
-        except (rawpy.LibRawNoThumbnailError, rawpy.LibRawUnsupportedThumbnailError):
-            pass
+        if use_embedded:
+            # 优先使用相机内置的 JPEG 预览，与相机直出色彩一致
+            thumb = None
+            try:
+                thumb = raw.extract_thumb()
+            except (rawpy.LibRawNoThumbnailError, rawpy.LibRawUnsupportedThumbnailError):
+                pass
 
-        if thumb is not None and thumb.format == rawpy.ThumbFormat.JPEG:
-            # 嵌入预览长边 >= 1000px 才采用，避免老相机只带 160x120 小图
-            preview_img = Image.open(io.BytesIO(thumb.data))
-            if max(preview_img.size) >= 1000:
-                output_path.write_bytes(thumb.data)
-                return
+            if thumb is not None and thumb.format == rawpy.ThumbFormat.JPEG:
+                # 嵌入预览长边 >= 1000px 才采用，避免老相机只带 160x120 小图
+                preview_img = Image.open(io.BytesIO(thumb.data))
+                if max(preview_img.size) >= 1000:
+                    output_path.write_bytes(thumb.data)
+                    return
 
-        # 退化路径：使用 rawpy 重新解码（不含相机厂商调色）
-        rgb = raw.postprocess(
-            use_camera_wb=True,
-            gamma=(2.222, 4.5),
-            output_color=rawpy.ColorSpace.sRGB,
-            output_bps=8,
-            no_auto_bright=False,
-        )
+        # rawpy 解码路径：不含相机厂商调色，由 --quality 控制 JPEG 压缩
+        postprocess_kwargs = {
+            "use_camera_wb": True,
+            "gamma": (2.222, 4.5),
+            "output_color": rawpy.ColorSpace.sRGB,
+            "output_bps": 8,
+            "no_auto_bright": False,
+        }
+        if fast:
+            postprocess_kwargs["demosaic_algorithm"] = rawpy.DemosaicAlgorithm.LINEAR
+            postprocess_kwargs["half_size"] = True
+
+        rgb = raw.postprocess(**postprocess_kwargs)
 
     Image.fromarray(rgb).save(str(output_path), "JPEG", quality=quality, progressive=True)
 

@@ -11,8 +11,10 @@
 """
 
 import mimetypes
+import os
 import sys
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -551,12 +553,34 @@ def http_command(
 @click.option("--recursive", "-r", is_flag=True, default=False, help="递归处理子目录")
 @click.option("--quality", "-q", default=92, show_default=True, type=int, help="JPEG 压缩质量 (1-100)")
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True, help="是否覆盖已存在的输出文件")
+@click.option(
+    "--use-embedded/--no-use-embedded",
+    default=True,
+    show_default=True,
+    help="是否优先使用相机内嵌 JPEG 预览（默认开启，色彩与相机直出一致；关闭后始终走 rawpy 解码）",
+)
+@click.option(
+    "--fast",
+    is_flag=True,
+    default=False,
+    help="快速解码模式：线性去马赛克 + 半分辨率，仅对 rawpy 解码路径生效（约 8-10x 加速）",
+)
+@click.option(
+    "--workers",
+    "-j",
+    default=None,
+    type=int,
+    help="并行处理线程数（默认 min(CPU 核数, 4)；-j 1 表示串行）",
+)
 def raw_command(
     directory: str,
     output_dir: str | None,
     recursive: bool,
     quality: int,
     overwrite: bool,
+    use_embedded: bool,
+    fast: bool,
+    workers: int | None,
 ) -> None:
     """将 RAW 图片批量转换为 JPG
 
@@ -571,10 +595,13 @@ def raw_command(
 
     \b
     示例:
-        qxw-image raw                        # 转换当前目录 RAW 文件到 ./jpg/
-        qxw-image raw -d ~/Photos -r         # 递归处理子目录
-        qxw-image raw -o ./converted         # 指定输出目录
-        qxw-image raw -q 95 --overwrite      # 高质量 + 覆盖已有文件
+        qxw-image raw                          # 转换当前目录 RAW 文件到 ./jpg/
+        qxw-image raw -d ~/Photos -r           # 递归处理子目录
+        qxw-image raw -o ./converted           # 指定输出目录
+        qxw-image raw -q 95 --overwrite        # 高质量 + 覆盖已有文件
+        qxw-image raw --no-use-embedded        # 跳过嵌入预览，强制 rawpy 解码
+        qxw-image raw --no-use-embedded --fast # 解码路径下再叠加半分辨率 + 线性去马赛克
+        qxw-image raw -j 8                     # 使用 8 个线程并行处理
     """
     try:
         _require_pillow()
@@ -588,10 +615,21 @@ def raw_command(
 
         out_path = Path(output_dir).resolve() if output_dir else dir_path / "jpg"
 
+        if workers is None:
+            workers = min(os.cpu_count() or 4, 4)
+        workers = max(1, workers)
+
         console.print(f"📷 [bold]QXW RAW Converter[/] v{__version__}")
         console.print(f"📁 源目录: [cyan]{dir_path}[/]")
         console.print(f"📂 输出目录: [cyan]{out_path}[/]")
         console.print(f"📊 JPEG 质量: {quality}")
+        if use_embedded:
+            console.print("🎨 嵌入预览: [green]优先使用[/]（与相机直出色彩一致）")
+        else:
+            console.print("🎨 嵌入预览: [yellow]已禁用[/]（强制 rawpy 解码）")
+        if fast:
+            console.print("⚡ 快速模式: [green]已启用[/]（半分辨率 + 线性去马赛克，仅解码路径生效）")
+        console.print(f"🧵 并行线程: {workers}")
         console.print()
 
         raw_files = scan_raw_files(dir_path, recursive=recursive)
@@ -601,9 +639,27 @@ def raw_command(
 
         console.print(f"🔍 找到 [bold]{len(raw_files)}[/] 个 RAW 文件\n")
 
-        success_count = 0
+        # 预筛选：已存在且未开启覆盖的直接计入 skip，减少线程池调度开销
+        tasks: list[tuple[Path, Path]] = []
         skip_count = 0
+        for raw_file in raw_files:
+            rel_dir = raw_file.relative_to(dir_path).parent
+            dest = out_path / rel_dir / f"{raw_file.stem}.jpg"
+            if dest.exists() and not overwrite:
+                skip_count += 1
+                continue
+            tasks.append((raw_file, dest))
+
+        success_count = 0
         fail_count = 0
+
+        def _run_one(item: tuple[Path, Path]) -> tuple[Path, Exception | None]:
+            src, dst = item
+            try:
+                convert_raw(src, dst, quality=quality, use_embedded=use_embedded, fast=fast)
+                return src, None
+            except Exception as e:
+                return src, e
 
         with Progress(
             SpinnerColumn(),
@@ -613,25 +669,30 @@ def raw_command(
             TimeRemainingColumn(),
             console=console,
         ) as progress:
-            task = progress.add_task("转换中...", total=len(raw_files))
+            task_id = progress.add_task("转换中...", total=len(raw_files))
+            if skip_count:
+                progress.advance(task_id, skip_count)
 
-            for raw_file in raw_files:
-                rel_dir = raw_file.relative_to(dir_path).parent
-                dest = out_path / rel_dir / f"{raw_file.stem}.jpg"
-
-                if dest.exists() and not overwrite:
-                    skip_count += 1
-                    progress.advance(task)
-                    continue
-
-                try:
-                    convert_raw(raw_file, dest, quality=quality)
-                    success_count += 1
-                except Exception as e:
-                    logger.warning("转换失败 %s: %s", raw_file.name, e)
-                    fail_count += 1
-
-                progress.advance(task)
+            if workers == 1 or len(tasks) <= 1:
+                for item in tasks:
+                    src, err = _run_one(item)
+                    if err is None:
+                        success_count += 1
+                    else:
+                        logger.warning("转换失败 %s: %s", src.name, err)
+                        fail_count += 1
+                    progress.advance(task_id)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [pool.submit(_run_one, item) for item in tasks]
+                    for future in as_completed(futures):
+                        src, err = future.result()
+                        if err is None:
+                            success_count += 1
+                        else:
+                            logger.warning("转换失败 %s: %s", src.name, err)
+                            fail_count += 1
+                        progress.advance(task_id)
 
         console.print()
         console.print(f"✅ 转换完成: [green]{success_count}[/] 成功", end="")
