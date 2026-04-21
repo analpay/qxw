@@ -15,7 +15,7 @@
 | `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
 | `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
 | `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG） | ✅ 可用 |
-| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配） | ✅ 可用 |
+| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成） | ✅ 可用 |
 
 ## qxw
 
@@ -770,6 +770,7 @@ qxw-markdown wx docs/foo.md -f jpg -b black -q 95
 | 子命令 | 说明 |
 |--------|------|
 | `wx`   | 把 Markdown 中的 PlantUML 代码围栏替换为本地图片引用，生成 `_wx.md` 副本 |
+| `cover` | 通过 ZenMux 调用 Gemini 3 Pro Image Preview（Nano Banana Pro）为 Markdown 生成封面 PNG |
 
 ### wx 参数说明
 
@@ -855,4 +856,59 @@ qxw-markdown wx docs/article.md --font-family '"Noto Sans CJK SC", sans-serif'
 
 # 禁用字体注入（保留 plantuml.jar 原始 SVG）
 qxw-markdown wx docs/article.md --font-family ""
+```
+
+### cover 子命令
+
+`cover` 读取 Markdown 正文，拼装风格 prompt 后通过 [ZenMux](https://zenmux.ai/) 调用 Google **Gemini 3 Pro Image Preview（Nano Banana Pro）** 图像模型生成一张封面 PNG。默认走内置的"技术白皮书 / 系统架构图"风格（浅绿网格背景、青蓝结构、橙绿数据流、LaTeX 公式）。
+
+#### API Key 配置
+
+任选一种方式配置 ZenMux API Key（优先级从高到低）：
+
+1. 命令行 `--api-key sk-zm-xxx`
+2. 环境变量 `ZENMUX_API_KEY=sk-zm-xxx`
+3. 写入 `~/.config/qxw/setting.json` 的 `zenmux_api_key` 字段
+
+#### 基本用法
+
+```bash
+# 默认：读取 docs/foo.md，在同目录生成 docs/foo_cover.png
+qxw-markdown cover docs/foo.md
+
+# 自定义输出路径
+qxw-markdown cover docs/foo.md -o out/my-cover.png
+
+# 追加额外提示词（不覆盖默认风格）
+qxw-markdown cover docs/foo.md --extra-prompt "突出网络拓扑与时序"
+
+# 完全替换主风格 prompt
+qxw-markdown cover docs/foo.md --style-prompt "minimalistic flat isometric illustration, soft pastel palette, clean vector shapes"
+```
+
+#### cover 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `<markdown_file>` | - | - | 要处理的源 Markdown 文件（位置参数，必填） |
+| `--output` | `-o` | `<md 同目录>/<stem>_cover.png` | 输出 PNG 路径 |
+| `--api-key` | - | 环境变量 / setting.json | ZenMux API Key；三级回退见上 |
+| `--model` | `-m` | `google/gemini-3-pro-image-preview` | 覆盖模型名 |
+| `--base-url` | - | `https://zenmux.ai/api/vertex-ai` | 覆盖 ZenMux Vertex AI 代理地址 |
+| `--style-prompt` | - | 内置白皮书风格 | 完全替换主视觉风格 prompt |
+| `--extra-prompt` | - | 空 | 追加到主 prompt 末尾的补充要求 |
+| `--truncate` | - | 65536 | Markdown 正文截断长度（字符数）；`<=0` 不截断 |
+
+#### 输出与返回信息
+
+- 成功时落盘指定路径的 PNG，并打印最终路径、prompt 字符数、模型名
+- 模型若附带文字说明会一并回显（`💬 模型附带说明: ...`）
+- 若模型未返回图片（被安全策略拦截 / 配额耗尽 / 模型名不可用）会抛出 `QxwError`，退出码 1
+- 缺少 `google-genai` 依赖或未配置 API Key 时会给出明确的中文修复指引
+
+#### 常见问题
+
+- **API Key 放哪最方便**：长期使用写到 `~/.config/qxw/setting.json` 的 `zenmux_api_key`；偶尔使用直接 `export ZENMUX_API_KEY=...`
+- **正文太长报错 / 图像抓不到重点**：降低 `--truncate`（如 8000 / 3000）聚焦前半部分；或用 `--extra-prompt` 把核心关键词喂进去
+- **想要其他视觉风格**：用 `--style-prompt` 整段替换；默认风格硬编码在 `qxw/library/services/cover_service.py::DEFAULT_COVER_STYLE_PROMPT`
 ```

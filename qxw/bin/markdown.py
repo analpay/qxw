@@ -1,16 +1,21 @@
 """qxw-markdown 命令入口
 
-Markdown 文档优化工具集。目前提供 `wx` 子命令，用于将 Markdown 中的
-PlantUML 代码围栏本地渲染为图片，并生成一份可直接粘贴到微信公众号
-编辑器的 _wx.md 副本。
+Markdown 文档优化工具集。目前提供 `wx` 与 `cover` 两个子命令：
+
+- ``wx``：将 Markdown 中的 PlantUML 代码围栏本地渲染为图片，并生成一份
+  可直接粘贴到微信公众号编辑器的 ``_wx.md`` 副本。
+- ``cover``：通过 ZenMux 接入 Google Gemini 3 Pro Image Preview
+  (Nano Banana Pro) 图像模型，为 Markdown 文档生成白皮书风格的封面图。
 
 用法:
     qxw-markdown wx path/to/doc.md                    # PNG + 白底（默认）
     qxw-markdown wx doc.md -f svg -b transparent      # 透明背景 SVG
     qxw-markdown wx doc.md -f jpg -b black -q 95      # 黑底高质量 JPG
+    qxw-markdown cover path/to/doc.md                 # 生成 <stem>_cover.png
     qxw-markdown --help                               # 查看帮助
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -27,7 +32,7 @@ console = Console()
 
 @click.group(
     name="qxw-markdown",
-    help="QXW Markdown 工具集（PlantUML 渲染 / 公众号适配）",
+    help="QXW Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成）",
     epilog="使用 qxw-markdown <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
@@ -198,6 +203,149 @@ def wx_command(
             console.print(f"   📎 {p}")
         console.print()
         console.print(f"📘 新 Markdown: [green]{result.output_md}[/]")
+
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(
+    name="cover",
+    help="调用 ZenMux 的 Gemini 3 Pro Image Preview 为 Markdown 生成封面图",
+)
+@click.argument("markdown_file", type=click.Path(exists=True, dir_okay=False, path_type=str))
+@click.option(
+    "--output",
+    "-o",
+    "output",
+    default=None,
+    help="输出图片路径（默认 <md 同目录>/<stem>_cover.png）",
+)
+@click.option(
+    "--api-key",
+    "api_key",
+    default=None,
+    help="ZenMux API Key；默认读环境变量 ZENMUX_API_KEY，再回退 setting.json 的 zenmux_api_key",
+)
+@click.option(
+    "--model",
+    "-m",
+    "model",
+    default=None,
+    help="覆盖默认模型名（默认 google/gemini-3-pro-image-preview）",
+)
+@click.option(
+    "--base-url",
+    "base_url",
+    default=None,
+    help="覆盖 ZenMux Vertex AI 地址（默认 https://zenmux.ai/api/vertex-ai）",
+)
+@click.option(
+    "--extra-prompt",
+    "extra_prompt",
+    default=None,
+    help="附加到主 prompt 末尾的额外说明（例如：强调主题关键词）",
+)
+@click.option(
+    "--style-prompt",
+    "style_prompt",
+    default=None,
+    help="覆盖主视觉风格 prompt（默认使用内置白皮书 / 技术架构图风格）",
+)
+@click.option(
+    "--truncate",
+    default=None,
+    type=int,
+    help="Markdown 正文截断长度（字符数，<=0 不截断，默认 65536）",
+)
+def cover_command(
+    markdown_file: str,
+    output: str | None,
+    api_key: str | None,
+    model: str | None,
+    base_url: str | None,
+    extra_prompt: str | None,
+    style_prompt: str | None,
+    truncate: int | None,
+) -> None:
+    """读取 Markdown 内容，调用 ZenMux 图像模型生成白皮书风格封面 PNG。
+
+    \b
+    API Key 三级回退（优先级从高到低）：
+        1. 命令行 --api-key
+        2. 环境变量 ZENMUX_API_KEY
+        3. ~/.config/qxw/setting.json 的 zenmux_api_key 字段
+
+    \b
+    默认行为：
+        - 输入 docs/foo.md → 生成 docs/foo_cover.png
+        - 模型：google/gemini-3-pro-image-preview（Nano Banana Pro）
+        - 风格：技术白皮书 / 浅绿网格 / 青蓝结构 / 橙绿数据流 / LaTeX 公式
+
+    \b
+    示例:
+        export ZENMUX_API_KEY=sk-zm-xxx
+        qxw-markdown cover docs/article.md
+        qxw-markdown cover docs/article.md -o out/cover.png
+        qxw-markdown cover docs/article.md --extra-prompt "突出网络拓扑与时序"
+        qxw-markdown cover docs/article.md --style-prompt "minimalistic flat isometric illustration..."
+    """
+    try:
+        from qxw.config.settings import get_settings
+        from qxw.library.services.cover_service import (
+            DEFAULT_COVER_STYLE_PROMPT,
+            DEFAULT_MARKDOWN_TRUNCATE,
+            generate_cover,
+        )
+
+        settings = get_settings()
+
+        # API Key 三级回退
+        resolved_api_key = (
+            (api_key or "").strip()
+            or os.environ.get("ZENMUX_API_KEY", "").strip()
+            or (settings.zenmux_api_key or "").strip()
+        )
+
+        resolved_model = model or settings.zenmux_image_model
+        resolved_base_url = base_url or settings.zenmux_base_url
+        resolved_style = style_prompt or DEFAULT_COVER_STYLE_PROMPT
+        resolved_truncate = truncate if truncate is not None else DEFAULT_MARKDOWN_TRUNCATE
+
+        md_path = Path(markdown_file).expanduser().resolve()
+        out_path = Path(output).expanduser().resolve() if output else None
+
+        console.print(f"🎨 [bold]QXW Markdown → 封面生成[/] v{__version__}")
+        console.print(f"📄 源文件: [cyan]{md_path}[/]")
+        console.print(f"🤖 模型: {resolved_model}")
+        if base_url:
+            console.print(f"🌐 API: {resolved_base_url}")
+        console.print()
+
+        with console.status("[bold blue]正在调用 ZenMux 生成封面..."):
+            result = generate_cover(
+                md_path=md_path,
+                api_key=resolved_api_key,
+                output_path=out_path,
+                model=resolved_model,
+                base_url=resolved_base_url,
+                style_prompt=resolved_style,
+                extra_prompt=extra_prompt,
+                truncate=resolved_truncate,
+            )
+
+        console.print(f"✅ 已生成封面: [green]{result.output_path}[/]")
+        console.print(f"📝 prompt 长度: {result.prompt_chars} 字符")
+        if result.text_response:
+            console.print(f"💬 模型附带说明: [dim]{result.text_response}[/]")
 
     except QxwError as e:
         logger.error("命令执行失败: %s", e.message)

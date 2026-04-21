@@ -38,6 +38,20 @@ class AppSettings(BaseSettings):
         description="配置文件目录",
     )
 
+    # ZenMux（Gemini 3 Pro Image Preview / Nano Banana Pro）封面生成配置
+    zenmux_api_key: str = Field(
+        default="",
+        description="ZenMux API Key（qxw-markdown cover 调用 Gemini 3 Pro Image Preview 使用）",
+    )
+    zenmux_base_url: str = Field(
+        default="https://zenmux.ai/api/vertex-ai",
+        description="ZenMux Vertex AI 代理地址",
+    )
+    zenmux_image_model: str = Field(
+        default="google/gemini-3-pro-image-preview",
+        description="封面生成默认模型名",
+    )
+
     model_config = {
         "env_prefix": "QXW_",
         "env_file": ".env",

@@ -206,7 +206,25 @@ qxw-markdown wx docs/article.md -f svg -b transparent
 qxw-markdown wx docs/article.md -f jpg -b black -q 95
 ```
 
-## 11. 下一步
+## 11. Markdown → AI 封面生成
+
+通过 [ZenMux](https://zenmux.ai/) 接入 Google **Gemini 3 Pro Image Preview（Nano Banana Pro）** 图像模型，为 Markdown 文档一键生成白皮书 / 技术架构图风格的封面 PNG。
+
+```bash
+# 一次性准备：设置 ZenMux API Key（任选其一）
+export ZENMUX_API_KEY=sk-zm-xxx
+# 或写入 ~/.config/qxw/setting.json 的 zenmux_api_key 字段
+
+# 生成 docs/article_cover.png（与源文件同目录）
+qxw-markdown cover docs/article.md
+
+# 指定输出路径 + 额外提示词
+qxw-markdown cover docs/article.md -o out/cover.png --extra-prompt "突出网络拓扑与时序"
+```
+
+默认风格：浅绿网格背景 / 青蓝结构与标签 / 橙绿色数据流箭头 / 精致 CPU/机架图标 / LaTeX 公式。可用 `--style-prompt` 整段替换主视觉描述。详见 [使用手册](user-guide.md#cover-子命令)。
+
+## 12. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

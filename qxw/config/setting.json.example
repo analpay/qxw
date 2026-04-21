@@ -5,5 +5,8 @@
     "db_url": "sqlite:///${HOME}/.config/qxw/qxw.db",
     "log_level": "INFO",
     "log_dir": "${HOME}/.config/qxw/logs",
-    "config_dir": "${HOME}/.config/qxw"
+    "config_dir": "${HOME}/.config/qxw",
+    "zenmux_api_key": "",
+    "zenmux_base_url": "https://zenmux.ai/api/vertex-ai",
+    "zenmux_image_model": "google/gemini-3-pro-image-preview"
 }
