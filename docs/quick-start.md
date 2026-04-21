@@ -90,10 +90,10 @@ qxw sbdqf
 ## 4. 查看所有命令
 
 ```bash
-# 列出所有可用命令（子命令 + 独立命令）
+# 列出所有 qxw-* 独立命令（不含 qxw 内置子命令）
 qxw list
 
-# 查看 qxw 命令组的子命令
+# 查看 qxw 命令组的子命令（list / hello / sbdqf / completion）
 qxw --help
 ```
 

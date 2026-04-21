@@ -47,7 +47,7 @@ pip install -e ".[dev]"
 # 查看 qxw 主命令帮助（列出子命令）
 qxw --help
 
-# 列出所有命令（子命令 + 独立命令）
+# 列出所有 qxw-* 独立命令（不含 qxw 内置子命令）
 qxw list
 
 # 运行示例子命令
@@ -68,7 +68,7 @@ qxw hello --name 开发者
 
 | 子命令 | 说明 |
 |--------|------|
-| `qxw list` | 📋 列出所有可用命令 |
+| `qxw list` | 📋 列出所有 `qxw-*` 独立命令 |
 | `qxw hello` | 示例命令，验证安装是否成功 |
 | `qxw sbdqf` | 🐭 老鼠穿越动画，致敬经典 sl 命令 |
 | `qxw completion` | 🔑 生成并安装 Shell 补全脚本（zsh / bash） |

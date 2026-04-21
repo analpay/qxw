@@ -2,14 +2,14 @@
 
 QXW 工具集的主命令。作为 click.group 承载若干内置子命令：
 
-- ``qxw list``       列出 QXW 工具集提供的所有命令（含子命令 + 独立命令）
+- ``qxw list``       列出 QXW 工具集提供的所有 qxw-* 独立命令
 - ``qxw hello``      示例命令（原 qxw-hello）
 - ``qxw sbdqf``      🐭 老鼠穿越动画（原 qxw-sbdqf）
 - ``qxw completion`` Shell 补全管理（原 qxw-completion）
 
 用法:
     qxw                 # 显示帮助（含子命令列表）
-    qxw list            # 列出所有命令
+    qxw list            # 列出所有 qxw-* 独立命令
     qxw hello --tui     # 调用子命令
     qxw --help          # 查看帮助信息
 """
@@ -38,20 +38,15 @@ console = Console()
 
 
 def _collect_commands() -> list[tuple[str, str]]:
-    """收集 qxw 的所有子命令以及 qxw-* 独立命令
+    """收集 qxw-* 独立命令
 
-    - qxw 子命令：从 main.commands 直接读取
-    - 独立命令：从已安装包的 console_scripts 入口点枚举（跳过 qxw 自己）
+    仅枚举已安装包的 console_scripts 入口点中以 ``qxw-`` 开头的命令，
+    不展示 qxw 自身的内置子命令（list / hello / sbdqf / completion）。
 
     Returns:
         按命令名排序的 (命令名, 说明) 列表
     """
     commands: list[tuple[str, str]] = []
-
-    # qxw 的子命令
-    for name, cmd in main.commands.items():
-        help_text = (getattr(cmd, "help", "") or "").split("\n")[0].strip()
-        commands.append((f"qxw {name}", help_text))
 
     # qxw-* 独立命令
     try:
@@ -109,19 +104,19 @@ def main(ctx: click.Context) -> None:
 
 @main.command(
     name="list",
-    help="列出 QXW 工具集提供的所有命令（含 qxw 子命令和 qxw-* 独立命令）",
+    help="列出 QXW 工具集提供的所有 qxw-* 独立命令",
 )
 def list_command() -> None:
-    """列出 QXW 工具集所有可用命令
+    """列出 QXW 工具集所有 qxw-* 独立命令
 
     \b
-    输出两类命令：
-        - qxw 子命令（list / hello / sbdqf / completion）
-        - qxw-* 独立命令（chat / image / markdown / ...）
+    仅输出通过 console_scripts 注册的 qxw-* 独立命令
+    （例如 qxw-chat / qxw-image / qxw-markdown ...），
+    不展示 qxw 自身的内置子命令（list / hello / sbdqf / completion）。
 
     \b
     示例:
-        qxw list                 # 列出所有命令
+        qxw list                 # 列出所有 qxw-* 独立命令
     """
     try:
         commands = _collect_commands()

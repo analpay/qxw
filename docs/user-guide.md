@@ -10,7 +10,7 @@
 
 | 子命令 | 说明 | 状态 |
 |--------|------|------|
-| `qxw list` | 列出所有可用命令（原 `qxw` 列表功能） | ✅ 可用 |
+| `qxw list` | 列出所有 `qxw-*` 独立命令（不含 qxw 内置子命令） | ✅ 可用 |
 | `qxw hello` | 示例命令，验证安装（原 `qxw-hello`） | ✅ 可用 |
 | `qxw sbdqf` | 老鼠穿越动画（原 `qxw-sbdqf`） | ✅ 可用 |
 | `qxw completion` | 🔑 生成并安装 Shell 补全（原 `qxw-completion`） | ✅ 可用 |
@@ -57,7 +57,7 @@ QXW 工具集的主命令。作为 Click 命令组承载若干内置子命令（
 
 ```bash
 qxw                 # 显示帮助（列出子命令）
-qxw list            # 列出所有已注册命令（子命令 + 独立命令）
+qxw list            # 列出所有 qxw-* 独立命令（不含 qxw 内置子命令）
 qxw <子命令> --help  # 查看子命令详细帮助
 ```
 
@@ -65,7 +65,7 @@ qxw <子命令> --help  # 查看子命令详细帮助
 
 | 子命令 | 说明 |
 |--------|------|
-| `list` | 列出 QXW 工具集所有命令（含 qxw 子命令和 qxw-* 独立命令） |
+| `list` | 列出 QXW 工具集所有 `qxw-*` 独立命令（不含 qxw 内置子命令） |
 | `hello` | 示例命令，验证安装 |
 | `sbdqf` | 🐭 老鼠穿越动画 |
 | `completion` | 🔑 生成 / 安装 / 卸载 Shell 补全脚本 |
@@ -84,14 +84,17 @@ qxw <子命令> --help  # 查看子命令详细帮助
 ┌───────────────────┬────────────────────────────────────────┐
 │ 命令              │ 说明                                    │
 ├───────────────────┼────────────────────────────────────────┤
-│ qxw completion    │ 为所有 qxw* 命令生成并安装 Shell 补全   │
-│ qxw hello         │ QXW 工具集示例命令 - Hello World        │
-│ qxw list          │ 列出 QXW 工具集提供的所有命令            │
-│ qxw sbdqf         │ 🐭 一只老鼠从终端屏幕上飞速穿过          │
-│ qxw-llm           │ QXW AI 对话工具集合（对话 / 提供商管理 / TUI） │
-│ ...               │ ...                                     │
+│ qxw-image         │ QXW 图片工具集（RAW / SVG / 调色滤镜）   │
+│ qxw-llm           │ QXW AI 对话工具集合 - 对话 / 提供商管理   │
+│ qxw-markdown      │ QXW Markdown 工具集                      │
+│ qxw-serve         │ QXW HTTP 服务集合                        │
+│ qxw-str           │ QXW 字符串工具集（长度统计等）            │
 └───────────────────┴────────────────────────────────────────┘
 ```
+
+> 注：`qxw list` 仅展示通过 `console_scripts` 注册的 `qxw-*` 独立命令，
+> 不展示 `qxw` 内置子命令（`list` / `hello` / `sbdqf` / `completion`），
+> 后者请通过 `qxw --help` 查看。
 
 ## qxw hello
 
