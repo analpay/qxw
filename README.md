@@ -79,12 +79,19 @@ qxw hello --name 开发者
 |------|------|
 | `qxw-chat` | 🤖 AI 对话工具，支持 OpenAI / Anthropic 提供商 |
 | `qxw-chat-provider` | ⚙️ AI 对话提供商管理（增删改查） |
-| `qxw-gitbook` | 📖 Markdown 文档工具（PDF 转换 / 本地预览） |
-| `qxw-webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
-| `qxw-file-server` | 📂 文件服务器（HTTP / FTP 文件共享，支持鉴权） |
-| `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转 JPG） |
-| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成） |
+| `qxw-serve` | 🌐 HTTP 服务集合（gitbook 预览 / 开发者工具 / 文件共享 / 图片画廊） |
+| `qxw-image` | 📷 图片工具集（RAW 批量转 JPG / SVG 转 PNG / 调色滤镜） |
+| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） |
+
+### qxw-serve 子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `qxw-serve gitbook` | 📖 Markdown 本地预览，支持从网页下载单页 PDF 与整本 PDF |
+| `qxw-serve webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
+| `qxw-serve file-web` | 📂 HTTP 文件共享（带 Basic Auth 鉴权） |
+| `qxw-serve image-web` | 🖼 图片画廊（缩略图 / Live Photo / RAW） |
 
 ## 项目结构
 

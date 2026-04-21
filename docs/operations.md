@@ -18,7 +18,7 @@ bash install.sh
 |------|------|
 | `--dev` | 开发模式安装（虚拟环境 + dev 依赖） |
 | `--force` | 强制重装（覆盖已有安装） |
-| `--gitbook` | 同时安装 gitbook PDF 导出依赖（weasyprint） |
+| `--pdf` | 同时安装 PDF 导出依赖（weasyprint，用于 `qxw-serve gitbook` 的 PDF 下载） |
 | `--uninstall` | 卸载 qxw |
 | `--help` | 显示帮助信息 |
 

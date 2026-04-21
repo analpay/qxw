@@ -24,7 +24,17 @@ qxw/
     ├── models/    # ORM 映射层 (SQLAlchemy)
     ├── managers/  # 管理器层
     └── services/  # 业务逻辑
+        ├── serve_gitbook.py   # qxw-serve gitbook 后端
+        ├── serve_webtool.py   # qxw-serve webtool 后端
+        ├── serve_file.py      # qxw-serve file-web 后端
+        ├── serve_image.py     # qxw-serve image-web 后端
+        ├── summary_service.py # qxw-markdown summary 目录生成
+        └── ...                # image_service / markdown_service / ...
 ```
+
+### qxw-serve 组织方式
+
+`qxw-serve` 是多个 HTTP 服务的统一入口，`qxw/bin/serve.py` 只负责 Click 子命令注册和打印启动信息，每个服务的 HTML 模板、请求处理器、配置模型都放到 `qxw/library/services/serve_*.py` 下；`serve.py` 在子命令函数内部 `import` 对应模块，`start_server(config)` 启动。新增 `qxw-serve <name>` 子命令时，按此模式新建 `serve_<name>.py`、在 `serve.py` 中注册子命令即可，不要把 HTML/handler 直接塞进 `bin/`。
 
 ## 新增命令步骤
 

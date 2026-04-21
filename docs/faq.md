@@ -58,6 +58,35 @@ export LANG=en_US.UTF-8
 
 在 TUI 界面中按 `D` 键切换。
 
+### Q: 原来的 `qxw-gitbook` / `qxw-webtool` / `qxw-file-server` 命令不见了？
+
+从本版本起，这三个命令被合并到统一入口 `qxw-serve` 下：
+
+| 旧命令 | 新命令 |
+|--------|--------|
+| `qxw-gitbook serve` | `qxw-serve gitbook` |
+| `qxw-gitbook summary` | `qxw-markdown summary` |
+| `qxw-gitbook pdf` | 已删除；改为在 `qxw-serve gitbook` 网页上点击"下载本页 PDF"或"下载整本 PDF" |
+| `qxw-webtool` | `qxw-serve webtool` |
+| `qxw-file-server http` | `qxw-serve file-web` |
+| `qxw-file-server ftp` | 已删除 |
+| `qxw-image http` | `qxw-serve image-web` |
+
+### Q: `qxw-serve gitbook` 点击 PDF 下载按钮返回 500
+
+PDF 下载依赖可选依赖 `weasyprint`，未安装时预览页面仍可用，但 PDF 下载会失败。按提示安装即可：
+
+```bash
+# macOS
+brew install pango && pip install weasyprint
+
+# Linux (Debian/Ubuntu)
+sudo apt install libpango-1.0-0 && pip install weasyprint
+
+# 或一步到位
+pip install "qxw[pdf]"
+```
+
 ### Q: qxw-image svg 转出来的 PNG 中文全是方块（□）
 
 cairosvg 按 SVG 声明的 `font-family` 选字体，若该字体不含 CJK 字形，中文就会渲染成方块。`svg` 子命令默认会向 SVG 注入 CSS，把文本字体强制覆盖为跨平台 CJK 字体栈（PingFang / YaHei / Noto CJK 等），已经可修复绝大多数场景。

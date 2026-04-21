@@ -1,44 +1,35 @@
-"""qxw-file-server 命令入口
+"""文件 HTTP 共享服务
 
-文件服务器工具，支持通过 HTTP 或 FTP 协议共享目录文件，并提供鉴权保护。
-
-用法:
-    qxw-file-server http             # 启动 HTTP 文件服务（默认 8080 端口）
-    qxw-file-server http --dir /tmp  # 指定共享目录
-    qxw-file-server ftp              # 启动 FTP 文件服务（默认 2121 端口）
-    qxw-file-server --help           # 查看帮助
+通过 HTTP 协议共享目录文件，支持 Basic Auth 鉴权、目录浏览与打包下载。
 """
+
+from __future__ import annotations
 
 import base64
 import io
 import mimetypes
 import secrets
 import string
-import sys
 import urllib.parse
 import zipfile
 from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-import click
 from pydantic import BaseModel, Field
-from rich.console import Console
 
 from qxw import __version__
-from qxw.library.base.exceptions import QxwError
 from qxw.library.base.logger import get_logger
 
-logger = get_logger("qxw.file_server")
-console = Console()
+logger = get_logger("qxw.serve.file")
 
 
 # ============================================================
-# 数据模型 (Pydantic)
+# 数据模型
 # ============================================================
 
 
-def _generate_password(length: int = 12) -> str:
+def generate_password(length: int = 12) -> str:
     """生成随机密码"""
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
@@ -48,12 +39,12 @@ class AuthConfig(BaseModel):
     """鉴权配置"""
 
     username: str = Field(default="admin", description="用户名")
-    password: str = Field(default_factory=lambda: _generate_password(), description="密码")
+    password: str = Field(default_factory=lambda: generate_password(), description="密码")
     auto_generated: bool = Field(default=False, description="密码是否自动生成")
 
 
-class FileServerConfig(BaseModel):
-    """文件服务器配置"""
+class FileWebServerConfig(BaseModel):
+    """文件 HTTP 服务器配置"""
 
     directory: Path = Field(description="共享目录路径")
     host: str = Field(default="0.0.0.0", description="监听地址")
@@ -63,7 +54,7 @@ class FileServerConfig(BaseModel):
 
 
 # ============================================================
-# HTTP 文件服务器
+# HTML 模板
 # ============================================================
 
 _DIR_HTML_TEMPLATE = """\
@@ -141,6 +132,11 @@ td a:hover {{ text-decoration: underline; }}
 """
 
 
+# ============================================================
+# 工具函数
+# ============================================================
+
+
 def _human_size(size: int) -> str:
     """将字节数格式化为人类可读的大小"""
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -163,10 +159,15 @@ def _build_breadcrumb(rel_path: str) -> str:
     return "".join(parts)
 
 
-class _FileServerHandler(BaseHTTPRequestHandler):
+# ============================================================
+# HTTP 处理器
+# ============================================================
+
+
+class _FileWebHandler(BaseHTTPRequestHandler):
     """HTTP 文件服务请求处理器，支持 Basic Auth"""
 
-    def __init__(self, config: FileServerConfig, *args, **kwargs):
+    def __init__(self, config: FileWebServerConfig, *args, **kwargs):
         self.config = config
         super().__init__(*args, **kwargs)
 
@@ -208,7 +209,6 @@ class _FileServerHandler(BaseHTTPRequestHandler):
     def _resolve_path(self, url_path: str) -> Path | None:
         """将 URL 路径解析为安全的文件系统路径"""
         decoded = urllib.parse.unquote(url_path)
-        # 防止路径穿越
         rel = decoded.lstrip("/")
         target = (self.config.directory / rel).resolve()
         try:
@@ -361,213 +361,8 @@ class _FileServerHandler(BaseHTTPRequestHandler):
         self.wfile.write(zip_bytes)
 
 
-# ============================================================
-# FTP 文件服务器
-# ============================================================
-
-_FTP_HINT = "FTP 功能需要安装 pyftpdlib 库: pip install pyftpdlib"
-
-
-def _start_ftp_server(config: FileServerConfig) -> None:
-    """启动 FTP 文件服务器"""
-    try:
-        from pyftpdlib.authorizers import DummyAuthorizer
-        from pyftpdlib.handlers import FTPHandler
-        from pyftpdlib.servers import FTPServer
-    except ImportError:
-        raise QxwError(_FTP_HINT) from None
-
-    authorizer = DummyAuthorizer()
-
-    # pyftpdlib 权限码: e=更改目录, l=列出, r=读取, a=追加, d=删除, f=重命名, m=建目录, w=写入
-    perm = "elradfmw" if config.writable else "elr"
-    authorizer.add_user(
-        config.auth.username,
-        config.auth.password,
-        str(config.directory),
-        perm=perm,
-    )
-
-    handler = FTPHandler
-    handler.authorizer = authorizer
-    handler.banner = f"QXW FTP File Server v{__version__}"
-    # 被动模式端口范围
-    handler.passive_ports = range(60000, 60100)
-
-    server = FTPServer((config.host, config.port), handler)
-    server.max_cons = 128
-    server.max_cons_per_ip = 10
-
+def start_server(config: FileWebServerConfig) -> None:
+    """启动 HTTP 文件服务器（阻塞）"""
+    handler = partial(_FileWebHandler, config)
+    server = HTTPServer((config.host, config.port), handler)
     server.serve_forever()
-
-
-# ============================================================
-# CLI 入口 (Click)
-# ============================================================
-
-
-def _print_auth_info(config: FileServerConfig, protocol: str) -> None:
-    """打印鉴权信息"""
-    console.print("\n🔐 [bold]鉴权信息[/]")
-    console.print(f"   用户名: [cyan]{config.auth.username}[/]")
-    console.print(f"   密码:   [cyan]{config.auth.password}[/]")
-    if config.auth.auto_generated:
-        console.print("   [dim]（密码为自动生成，下次启动将会变化）[/]")
-
-
-def _validate_directory(directory: str) -> Path:
-    """校验并返回目录路径"""
-    dir_path = Path(directory).resolve()
-    if not dir_path.is_dir():
-        raise click.BadParameter(f"目录不存在: {directory}")
-    return dir_path
-
-
-@click.group(
-    name="qxw-file-server",
-    help="QXW 文件服务器（HTTP / FTP 文件共享，支持鉴权）",
-    epilog="使用 qxw-file-server <子命令> --help 查看各子命令的详细帮助。",
-    invoke_without_command=True,
-)
-@click.version_option(
-    version=__version__,
-    prog_name="qxw-file-server",
-    message="%(prog)s 版本 %(version)s",
-)
-@click.pass_context
-def main(ctx: click.Context) -> None:
-    if ctx.invoked_subcommand is None:
-        click.echo(ctx.get_help())
-
-
-@main.command(name="http", help="启动 HTTP 文件服务器（带 Basic Auth 鉴权）")
-@click.option("--dir", "-d", "directory", default=".", show_default=True, help="共享目录路径")
-@click.option("--port", "-p", default=8080, show_default=True, type=int, help="服务端口")
-@click.option("--host", "-H", default="127.0.0.1", show_default=True, help="监听地址")
-@click.option("--username", "-u", default="admin", show_default=True, help="鉴权用户名")
-@click.option("--password", "-P", default=None, help="鉴权密码（不指定则自动生成）")
-@click.option("--writable", "-w", is_flag=True, default=False, help="允许上传文件（暂不支持，保留选项）")
-def http_command(directory: str, port: int, host: str, username: str, password: str | None, writable: bool) -> None:
-    """启动 HTTP 文件服务器
-
-    提供 Web 界面浏览和下载目录中的文件，使用 HTTP Basic Auth 进行鉴权保护。
-
-    \b
-    示例:
-        qxw-file-server http                       # 共享当前目录（8080 端口）
-        qxw-file-server http -d /tmp               # 共享 /tmp 目录
-        qxw-file-server http -p 9000               # 指定端口
-        qxw-file-server http -u user -P mypass     # 指定用户名和密码
-        qxw-file-server http -H 127.0.0.1          # 仅本机访问
-    """
-    try:
-        dir_path = _validate_directory(directory)
-        auto_generated = password is None
-        auth = AuthConfig(
-            username=username,
-            password=password if password else _generate_password(),
-            auto_generated=auto_generated,
-        )
-        config = FileServerConfig(
-            directory=dir_path,
-            host=host,
-            port=port,
-            auth=auth,
-            writable=writable,
-        )
-
-        console.print(f"📂 [bold]QXW HTTP File Server[/] v{__version__}")
-        console.print(f"📁 共享目录: [cyan]{dir_path}[/]")
-        console.print(f"🌐 服务地址: [link=http://{host}:{port}]http://{host}:{port}[/link]")
-        _print_auth_info(config, "http")
-        console.print("\n按 Ctrl+C 停止服务\n")
-
-        handler = partial(_FileServerHandler, config)
-        server = HTTPServer((host, port), handler)
-        server.serve_forever()
-
-    except OSError as e:
-        if "Address already in use" in str(e) or getattr(e, "errno", 0) == 48:
-            click.echo(f"错误: 端口 {port} 已被占用，请使用 -p 指定其他端口", err=True)
-        else:
-            click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
-    except QxwError as e:
-        logger.error("命令执行失败: %s", e.message)
-        click.echo(f"错误: {e.message}", err=True)
-        sys.exit(e.exit_code)
-    except KeyboardInterrupt:
-        click.echo("\n服务已停止")
-    except Exception as e:
-        logger.exception("未预期的错误")
-        click.echo(f"未预期的错误: {e}", err=True)
-        sys.exit(1)
-
-
-@main.command(name="ftp", help="启动 FTP 文件服务器（带用户鉴权）")
-@click.option("--dir", "-d", "directory", default=".", show_default=True, help="共享目录路径")
-@click.option("--port", "-p", default=2121, show_default=True, type=int, help="服务端口")
-@click.option("--host", "-H", default="0.0.0.0", show_default=True, help="监听地址")
-@click.option("--username", "-u", default="admin", show_default=True, help="鉴权用户名")
-@click.option("--password", "-P", default=None, help="鉴权密码（不指定则自动生成）")
-@click.option("--writable", "-w", is_flag=True, default=False, help="允许上传 / 写入 / 删除文件")
-def ftp_command(directory: str, port: int, host: str, username: str, password: str | None, writable: bool) -> None:
-    """启动 FTP 文件服务器
-
-    使用 FTP 协议共享目录文件，客户端需提供用户名和密码登录。
-    默认只读模式，使用 -w 选项开启写入权限。
-
-    \b
-    示例:
-        qxw-file-server ftp                        # 共享当前目录（2121 端口）
-        qxw-file-server ftp -d /tmp                # 共享 /tmp 目录
-        qxw-file-server ftp -p 21                  # 指定端口（需 root 权限）
-        qxw-file-server ftp -u user -P mypass      # 指定用户名和密码
-        qxw-file-server ftp -w                     # 允许写入
-    """
-    try:
-        dir_path = _validate_directory(directory)
-        auto_generated = password is None
-        auth = AuthConfig(
-            username=username,
-            password=password if password else _generate_password(),
-            auto_generated=auto_generated,
-        )
-        config = FileServerConfig(
-            directory=dir_path,
-            host=host,
-            port=port,
-            auth=auth,
-            writable=writable,
-        )
-
-        console.print(f"📂 [bold]QXW FTP File Server[/] v{__version__}")
-        console.print(f"📁 共享目录: [cyan]{dir_path}[/]")
-        console.print(f"🌐 服务地址: [cyan]ftp://{host}:{port}[/]")
-        perm_str = "读写（上传/删除/重命名）" if writable else "只读"
-        console.print(f"🔒 权限模式: {perm_str}")
-        _print_auth_info(config, "ftp")
-        console.print("\n按 Ctrl+C 停止服务\n")
-
-        _start_ftp_server(config)
-
-    except OSError as e:
-        if "Address already in use" in str(e) or getattr(e, "errno", 0) == 48:
-            click.echo(f"错误: 端口 {port} 已被占用，请使用 -p 指定其他端口", err=True)
-        else:
-            click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
-    except QxwError as e:
-        logger.error("命令执行失败: %s", e.message)
-        click.echo(f"错误: {e.message}", err=True)
-        sys.exit(e.exit_code)
-    except KeyboardInterrupt:
-        click.echo("\n服务已停止")
-    except Exception as e:
-        logger.exception("未预期的错误")
-        click.echo(f"未预期的错误: {e}", err=True)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

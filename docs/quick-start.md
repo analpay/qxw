@@ -23,7 +23,7 @@ bash install.sh
 ```bash
 bash install.sh --dev        # 开发模式（虚拟环境 + dev 依赖）
 bash install.sh --force      # 强制重装
-bash install.sh --gitbook    # 同时安装 gitbook PDF 导出依赖
+bash install.sh --pdf        # 同时安装 PDF 导出依赖（qxw-serve gitbook 的 PDF 下载）
 bash install.sh --uninstall  # 卸载 qxw
 bash install.sh --help       # 查看帮助
 ```
@@ -126,52 +126,36 @@ qxw-chat
 qxw-chat -m "你好"
 ```
 
-## 6. Markdown 文档工具
+## 6. HTTP 服务集合（qxw-serve）
+
+把常用 HTTP 小服务统一到 `qxw-serve <子命令>` 下，包含 gitbook 预览、开发者工具、文件共享与图片画廊。
 
 ```bash
-# 预览当前目录下的 Markdown 文件
-qxw-gitbook serve
+# Markdown 本地预览（侧边目录树 + 单页 / 整本 PDF 下载按钮）
+qxw-serve gitbook -d docs/
 
-# 将 Markdown 文件转换为 PDF（需先安装 weasyprint）
-qxw-gitbook pdf
+# 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码）
+qxw-serve webtool -p 3000
+
+# HTTP 文件共享（Basic Auth，密码不指定时启动时自动生成并打印）
+qxw-serve file-web -d ~/Downloads
+
+# 图片画廊（缩略图 + 灯箱 + Live Photo + RAW 预览）
+pip install "qxw[image]"
+qxw-serve image-web -d ~/Photos
 ```
 
-## 7. 开发者 Web 工具集
+> `qxw-serve gitbook` 的"下载本页 PDF / 下载整本 PDF"按钮依赖 `weasyprint`。若未安装，预览依然可用，仅 PDF 下载会返回错误并提示：
+>
+> - macOS：`brew install pango && pip install weasyprint`
+> - Linux：`sudo apt install libpango-1.0-0 && pip install weasyprint`
+> - 或一步到位：`pip install "qxw[pdf]"`
 
-```bash
-# 启动 Web 工具服务
-qxw-webtool
-
-# 指定端口
-qxw-webtool -p 3000
-```
-
-在浏览器中打开 http://127.0.0.1:9000 即可使用文本对比、JSON 格式化、时间戳转换、加解密、URL/Base64 编解码等工具。
-
-## 8. 文件服务器
-
-```bash
-# 启动 HTTP 文件服务器，共享当前目录
-qxw-file-server http
-
-# 启动 FTP 文件服务器（需安装 pyftpdlib）
-pip install pyftpdlib
-qxw-file-server ftp
-```
-
-启动后终端会打印自动生成的用户名和密码，用浏览器访问 http://0.0.0.0:8080 即可浏览文件。
-
-## 9. 图片工具
+## 7. 图片批处理（qxw-image）
 
 ```bash
 # 安装图片处理依赖
 pip install "qxw[image]"
-
-# 启动图片浏览 HTTP 服务
-qxw-image http
-
-# 指定目录
-qxw-image http -d ~/Photos
 
 # 将相机 RAW 文件批量转换为 JPG（输出到源目录下的 jpg/）
 qxw-image raw -d ~/Photos -r
@@ -190,9 +174,7 @@ qxw-image svg -d ./assets
 qxw-image svg -d ./assets -b transparent
 ```
 
-浏览器打开 http://127.0.0.1:8080 即可浏览图片画廊，点击缩略图查看原图，支持 Live Photo 播放。
-
-## 10. Markdown → 公众号适配
+## 8. Markdown → 公众号适配
 
 将 Markdown 里的 PlantUML 代码围栏本地渲染为图片，并生成一份可直接粘贴到微信公众号编辑器的 `_wx.md` 副本（渲染走本地 `plantuml.jar`，需要先装好 Java 运行时）。
 
@@ -210,7 +192,7 @@ qxw-markdown wx docs/article.md -f svg -b transparent
 qxw-markdown wx docs/article.md -f jpg -b black -q 95
 ```
 
-## 11. Markdown → AI 封面生成
+## 9. Markdown → AI 封面生成
 
 通过 [ZenMux](https://zenmux.ai/) 接入 Google **Gemini 3 Pro Image Preview（Nano Banana Pro）** 图像模型，为 Markdown 文档一键生成白皮书 / 技术架构图风格的封面 PNG。
 
@@ -228,7 +210,7 @@ qxw-markdown cover docs/article.md -o out/cover.png --extra-prompt "突出网络
 
 默认风格：浅绿网格背景 / 青蓝结构与标签 / 橙绿色数据流箭头 / 精致 CPU/机架图标 / LaTeX 公式。可用 `--style-prompt` 整段替换主视觉描述。详见 [使用手册](user-guide.md#cover-子命令)。
 
-## 12. Shell 自动补全
+## 10. Shell 自动补全
 
 为所有 `qxw` / `qxw-*` 命令一次性开启 zsh / bash 的子命令与选项 tab 补全：
 
@@ -242,7 +224,8 @@ source ~/.zshrc                # zsh
 
 # 验证
 qxw <TAB>                      # 应补出 list / hello / sbdqf / completion
-qxw-image <TAB>                # 应补出 http / raw / svg / filter
+qxw-image <TAB>                # 应补出 raw / svg / filter
+qxw-serve <TAB>                # 应补出 gitbook / webtool / file-web / image-web
 qxw-chat --<TAB>               # 应补出全部选项
 
 # 随时查看状态
@@ -251,7 +234,7 @@ qxw completion status
 
 新增或修改命令后，再跑一次 `qxw completion install -y` 即可刷新（脚本整体覆盖，无需卸载）。详见 [使用手册 · qxw completion](user-guide.md#qxw-completion)。
 
-## 13. 字符串工具
+## 11. 字符串工具
 
 ```bash
 # 统计字符串的字符数（Unicode 码点）与 UTF-8 字节数
@@ -267,7 +250,7 @@ LEN=$(qxw-str len -q "你好世界")      # 字符数
 BYTES=$(qxw-str len -b "你好世界")    # UTF-8 字节数
 ```
 
-## 14. 下一步
+## 12. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

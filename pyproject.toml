@@ -31,11 +31,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gitbook = [
+pdf = [
     "weasyprint>=60.0",
-]
-ftp = [
-    "pyftpdlib>=1.5.0",
 ]
 dev = [
     "pytest>=7.0.0",
@@ -48,9 +45,7 @@ dev = [
 qxw = "qxw.bin.commands:main"
 qxw-chat = "qxw.bin.chat:main"
 qxw-chat-provider = "qxw.bin.chat_provider:main"
-qxw-gitbook = "qxw.bin.gitbook:main"
-qxw-webtool = "qxw.bin.webtool:main"
-qxw-file-server = "qxw.bin.file_server:main"
+qxw-serve = "qxw.bin.serve:main"
 qxw-image = "qxw.bin.image:main"
 qxw-markdown = "qxw.bin.markdown:main"
 qxw-str = "qxw.bin.str_cmd:main"

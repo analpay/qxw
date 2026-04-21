@@ -1,17 +1,21 @@
 """qxw-markdown 命令入口
 
-Markdown 文档优化工具集。目前提供 `wx` 与 `cover` 两个子命令：
+Markdown 文档优化工具集，提供以下子命令：
 
 - ``wx``：将 Markdown 中的 PlantUML 代码围栏本地渲染为图片，并生成一份
   可直接粘贴到微信公众号编辑器的 ``_wx.md`` 副本。
 - ``cover``：通过 ZenMux 接入 Google Gemini 3 Pro Image Preview
   (Nano Banana Pro) 图像模型，为 Markdown 文档生成白皮书风格的封面图。
+- ``summary``：扫描目录结构，为每个包含 README.md 的目录生成 SUMMARY.md 和
+  INDEX.md 目录文件（适配 Gitbook / 文档站）。
 
 用法:
     qxw-markdown wx path/to/doc.md                    # PNG + 白底（默认）
     qxw-markdown wx doc.md -f svg -b transparent      # 透明背景 SVG
     qxw-markdown wx doc.md -f jpg -b black -q 95      # 黑底高质量 JPG
     qxw-markdown cover path/to/doc.md                 # 生成 <stem>_cover.png
+    qxw-markdown summary                              # 为当前目录生成 SUMMARY.md
+    qxw-markdown summary -d docs/ --depth 5           # 指定目录和层级深度
     qxw-markdown --help                               # 查看帮助
 """
 
@@ -32,7 +36,7 @@ console = Console()
 
 @click.group(
     name="qxw-markdown",
-    help="QXW Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成）",
+    help="QXW Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 目录生成）",
     epilog="使用 qxw-markdown <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
@@ -346,6 +350,60 @@ def cover_command(
         console.print(f"📝 prompt 长度: {result.prompt_chars} 字符")
         if result.text_response:
             console.print(f"💬 模型附带说明: [dim]{result.text_response}[/]")
+
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="summary", help="为目录生成 SUMMARY.md 和 INDEX.md 目录文件")
+@click.option("--dir", "-d", "directory", default=".", show_default=True, help="文档根目录")
+@click.option("--depth", default=5, show_default=True, type=int, help="目录层级深度")
+def summary_command(directory: str, depth: int) -> None:
+    """扫描目录结构，为每个包含 README.md 的目录生成目录文件
+
+    \b
+    示例:
+        qxw-markdown summary              # 为当前目录生成
+        qxw-markdown summary -d docs/     # 指定目录
+        qxw-markdown summary --depth 5    # 指定深度
+
+    \b
+    生成规则:
+        SUMMARY.md  = 标题 + 目录结构
+        INDEX.md    = README.md 内容 + 目录结构
+
+    \b
+    特殊处理:
+        - 标题含 (todo) 的条目会被跳过
+        - 存在 SUMMARY.md.skip 的目录会被跳过
+        - 文件按数字前缀排序（如 1.intro.md, 2.setup.md）
+    """
+    try:
+        from qxw.library.services.summary_service import generate_summary_for_dir
+
+        base_dir = Path(directory).resolve()
+        if not base_dir.is_dir():
+            click.echo(f"错误: 目录不存在: {directory}", err=True)
+            sys.exit(1)
+
+        if not (base_dir / "README.md").is_file():
+            click.echo(f"错误: {directory} 下没有 README.md", err=True)
+            sys.exit(1)
+
+        generated = generate_summary_for_dir(base_dir, depth=depth)
+
+        for filepath in generated:
+            console.print(f"  [green]✓[/] {filepath}")
+        console.print(f"\n共生成 {len(generated)} 个文件")
 
     except QxwError as e:
         logger.error("命令执行失败: %s", e.message)

@@ -1,18 +1,12 @@
-"""qxw-webtool 命令入口
+"""Webtool 开发者工具 HTTP 服务
 
-开发者常用 Web 工具集，提供以下功能：
-- 文本对比
-- JSON 格式化
-- 时间戳转换
-- 加解密（哈希、HMAC、AES、DES、3DES、RSA、Ed25519）
-- URL 编解码
-- Base64 编解码
-
-用法:
-    qxw-webtool              # 启动 Web 工具服务（默认 9000 端口）
-    qxw-webtool -p 3000     # 指定端口
-    qxw-webtool --help       # 查看帮助
+提供一组开发者常用的 Web 小工具，所有逻辑均在单页应用中通过前端调用后端 API：
+- 文本对比 / JSON 格式化 / 时间戳转换
+- 哈希 / HMAC / AES / DES / 3DES / RSA / Ed25519 / 证书解析
+- URL 编解码 / Base64 编解码
 """
+
+from __future__ import annotations
 
 import base64 as b64_mod
 import difflib
@@ -20,20 +14,15 @@ import hashlib
 import hmac as hmac_mod
 import json
 import os
-import sys
 import urllib.parse
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import click
-from rich.console import Console
-
 from qxw import __version__
-from qxw.library.base.exceptions import QxwError
 from qxw.library.base.logger import get_logger
 
-logger = get_logger("qxw.webtool")
-console = Console()
+logger = get_logger("qxw.serve.webtool")
 
 
 # ============================================================
@@ -762,11 +751,7 @@ def _aes_process(data: str, key_hex: str, iv_hex: str, mode: str, action: str) -
 
 
 def _des_process(data: str, key_hex: str, iv_hex: str, action: str, *, triple: bool = False) -> str:
-    """DES / 3DES 加解密（CBC，PKCS7 填充）
-
-    DES 使用 TripleDES(key*3) 模拟，密钥 8 字节。
-    3DES 密钥 16 或 24 字节。
-    """
+    """DES / 3DES 加解密（CBC，PKCS7 填充）"""
     try:
         from cryptography.hazmat.primitives import padding as sym_padding
         from cryptography.hazmat.primitives.ciphers import Cipher
@@ -1045,69 +1030,16 @@ class _WebtoolHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-# ============================================================
-# CLI 入口 (Click)
-# ============================================================
+@dataclass
+class WebtoolServerConfig:
+    host: str = "127.0.0.1"
+    port: int = 9000
 
 
-@click.command(
-    name="qxw-webtool",
-    help="QXW 开发者 Web 工具集（文本对比 / JSON 格式化 / 时间戳转换 / 加解密 / 编解码）",
-    epilog="启动后在浏览器中打开显示的地址即可使用。",
-)
-@click.option("--port", "-p", default=9000, show_default=True, type=int, help="服务端口")
-@click.option("--host", "-H", default="127.0.0.1", show_default=True, help="监听地址")
-@click.version_option(
-    version=__version__,
-    prog_name="qxw-webtool",
-    message="%(prog)s 版本 %(version)s",
-)
-def main(port: int, host: str) -> None:
-    """启动开发者 Web 工具集
+def start_server(config: WebtoolServerConfig) -> None:
+    """启动 Webtool HTTP 服务（阻塞）"""
+    _WebtoolHandler._routes = _build_routes()
+    _WebtoolHandler._page_html = _HTML_PAGE.replace("__VERSION__", __version__)
 
-    \b
-    提供以下工具：
-      - 文本对比：两段文本 Unified Diff 差异比较
-      - JSON 格式化：格式化 / 压缩 / 校验
-      - 时间戳转换：Unix 时间戳 ↔ 日期时间
-      - 加解密：MD5 / SHA / HMAC / AES / DES / 3DES / RSA / Ed25519
-      - URL 编解码：URL Encode / Decode
-      - Base64 编解码：Base64 Encode / Decode
-
-    \b
-    示例:
-        qxw-webtool              # 默认 9000 端口
-        qxw-webtool -p 3000     # 指定端口
-        qxw-webtool -H 0.0.0.0  # 允许局域网访问
-    """
-    try:
-        _WebtoolHandler._routes = _build_routes()
-        _WebtoolHandler._page_html = _HTML_PAGE.replace("__VERSION__", __version__)
-
-        console.print(f"🛠️  [bold]QXW WebTool[/] v{__version__}")
-        console.print(f"🌐 服务地址: [link=http://{host}:{port}]http://{host}:{port}[/link]")
-        console.print("按 Ctrl+C 停止服务\n")
-
-        server = HTTPServer((host, port), _WebtoolHandler)
-        server.serve_forever()
-
-    except OSError as e:
-        if "Address already in use" in str(e) or getattr(e, "errno", 0) == 48:
-            click.echo(f"错误: 端口 {port} 已被占用，请使用 -p 指定其他端口", err=True)
-        else:
-            click.echo(f"错误: {e}", err=True)
-        sys.exit(1)
-    except QxwError as e:
-        logger.error("命令执行失败: %s", e.message)
-        click.echo(f"错误: {e.message}", err=True)
-        sys.exit(e.exit_code)
-    except KeyboardInterrupt:
-        click.echo("\n服务已停止")
-    except Exception as e:
-        logger.exception("未预期的错误")
-        click.echo(f"未预期的错误: {e}", err=True)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+    server = HTTPServer((config.host, config.port), _WebtoolHandler)
+    server.serve_forever()

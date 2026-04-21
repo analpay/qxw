@@ -9,13 +9,13 @@
 #   - 通过 pipx 全局安装 qxw 工具集
 #   - 支持开发模式安装（--dev）
 #   - 支持强制重装（--force）
-#   - 支持可选的 gitbook PDF 导出依赖（--gitbook）
+#   - 支持可选的 PDF 导出依赖（--pdf）
 #
 # 用法：
 #   bash install.sh              # 标准安装
 #   bash install.sh --dev        # 开发模式（editable + dev 依赖）
 #   bash install.sh --force      # 强制重装
-#   bash install.sh --gitbook    # 同时安装 gitbook PDF 导出依赖
+#   bash install.sh --pdf        # 同时安装 PDF 导出依赖（weasyprint）
 #   bash install.sh --uninstall  # 卸载 qxw
 # ============================================================
 
@@ -53,14 +53,14 @@ has_cmd() {
 
 MODE="pipx"          # pipx | dev
 FORCE=false
-INSTALL_GITBOOK=false
+INSTALL_PDF=false
 UNINSTALL=false
 
 for arg in "$@"; do
     case "$arg" in
         --dev)       MODE="dev" ;;
         --force)     FORCE=true ;;
-        --gitbook)   INSTALL_GITBOOK=true ;;
+        --pdf)       INSTALL_PDF=true ;;
         --uninstall) UNINSTALL=true ;;
         --help|-h)
             echo "用法: bash install.sh [选项]"
@@ -68,7 +68,7 @@ for arg in "$@"; do
             echo "选项:"
             echo "  --dev        开发模式安装（editable + dev 依赖）"
             echo "  --force      强制重装（覆盖已有安装）"
-            echo "  --gitbook    同时安装 gitbook PDF 导出依赖（weasyprint）"
+            echo "  --pdf        同时安装 PDF 导出依赖（weasyprint，用于 qxw-serve gitbook 的 PDF 下载）"
             echo "  --uninstall  卸载 qxw"
             echo "  --help, -h   显示此帮助信息"
             exit 0
@@ -137,8 +137,8 @@ print_env_info() {
     info "包管理器:   ${PKG_MGR}"
     info "架构:       $(uname -m)"
     info "安装模式:   ${MODE}"
-    [ "$FORCE" = true ]          && info "强制重装:   是"
-    [ "$INSTALL_GITBOOK" = true ] && info "Gitbook:    是"
+    [ "$FORCE" = true ]       && info "强制重装:   是"
+    [ "$INSTALL_PDF" = true ] && info "PDF 导出:   是"
 }
 
 # ======================== 前置依赖安装 ========================
@@ -431,12 +431,12 @@ install_qxw_pipx() {
         die "pipx 安装失败"
     fi
 
-    # 安装可选的 gitbook 依赖（注入到 pipx 虚拟环境）
-    if [ "$INSTALL_GITBOOK" = true ]; then
-        step "安装 Gitbook PDF 导出依赖"
+    # 安装可选的 PDF 导出依赖（注入到 pipx 虚拟环境）
+    if [ "$INSTALL_PDF" = true ]; then
+        step "安装 PDF 导出依赖"
         info "注入 weasyprint 到 qxw 的 pipx 环境..."
         pipx inject qxw weasyprint
-        success "Gitbook 依赖安装完成"
+        success "PDF 导出依赖安装完成"
     fi
 }
 
@@ -462,10 +462,10 @@ install_qxw_dev() {
     info "安装 QXW（开发模式 + dev 依赖）..."
     "$pip_cmd" install -e ".[dev]"
 
-    if [ "$INSTALL_GITBOOK" = true ]; then
-        step "安装 Gitbook PDF 导出依赖"
-        "$pip_cmd" install -e ".[gitbook]"
-        success "Gitbook 依赖安装完成"
+    if [ "$INSTALL_PDF" = true ]; then
+        step "安装 PDF 导出依赖"
+        "$pip_cmd" install -e ".[pdf]"
+        success "PDF 导出依赖安装完成"
     fi
 
     success "开发模式安装完成"
@@ -498,7 +498,7 @@ verify_install() {
     local all_ok=true
 
     # 获取所有注册的命令
-    local commands=("qxw" "qxw-chat" "qxw-chat-provider" "qxw-gitbook" "qxw-webtool" "qxw-str")
+    local commands=("qxw" "qxw-chat" "qxw-chat-provider" "qxw-serve" "qxw-image" "qxw-markdown" "qxw-str")
 
     for cmd in "${commands[@]}"; do
         if has_cmd "$cmd"; then

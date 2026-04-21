@@ -21,12 +21,19 @@
 |------|------|------|
 | `qxw-chat` | AI 对话工具 | ✅ 可用 |
 | `qxw-chat-provider` | AI 对话提供商管理 | ✅ 可用 |
-| `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
-| `qxw-webtool` | 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） | ✅ 可用 |
-| `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
-| `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG） | ✅ 可用 |
-| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成） | ✅ 可用 |
+| `qxw-serve` | 🌐 HTTP 服务集合（gitbook / webtool / file-web / image-web） | ✅ 可用 |
+| `qxw-image` | 📷 图片工具集（RAW 批量转换 / SVG 转 PNG / 调色滤镜） | ✅ 可用 |
+| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） | ✅ 可用 |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） | ✅ 可用 |
+
+### qxw-serve 子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `qxw-serve gitbook` | 📖 Markdown 本地预览（支持单页 / 整本 PDF 下载） |
+| `qxw-serve webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
+| `qxw-serve file-web` | 📂 HTTP 文件共享（带 Basic Auth 鉴权） |
+| `qxw-serve image-web` | 🖼 图片画廊（缩略图 / Live Photo / RAW 预览） |
 
 ## qxw
 
@@ -291,59 +298,36 @@ qxw-chat --system "你是一个 Python 专家"
 | `/clear` | 清空上下文（重新开始对话） |
 | `Ctrl+C` | 退出对话 |
 
-## qxw-gitbook
+## qxw-serve
 
-Markdown 文档工具，支持将 Markdown 文件批量转换为 PDF，以及启动本地 HTTP 预览服务。
+HTTP 服务集合命令。把原先分散的 `qxw-gitbook serve` / `qxw-webtool` / `qxw-file-server http` / `qxw-image http` 统一到同一个命令组下，暴露为四个子命令。
 
-### 安装 PDF 转换依赖
-
-`serve` 子命令开箱可用。`pdf` 子命令需要额外安装 `weasyprint`：
-
-```bash
-# macOS
-brew install pango
-pip install weasyprint
-
-# 或一步到位
-pip install "qxw[gitbook]"
-```
-
-### 基本用法
-
-```bash
-# 将当前目录下的 .md 文件转换为 PDF
-qxw-gitbook pdf
-
-# 递归处理子目录
-qxw-gitbook pdf -r
-
-# 指定源目录和输出目录
-qxw-gitbook pdf -d docs/ -o output/
-
-# 启动本地预览服务
-qxw-gitbook serve
-
-# 指定端口和目录
-qxw-gitbook serve -p 3000 -d docs/
-```
-
-### 子命令说明
+### 子命令一览
 
 | 子命令 | 说明 |
 |--------|------|
-| `pdf` | 将目录下的 Markdown 文件批量转换为 PDF |
-| `serve` | 启动本地 HTTP 服务预览 Markdown 文件 |
-| `summary` | 为目录生成 SUMMARY.md 和 INDEX.md 目录文件 |
+| `qxw-serve gitbook` | 📖 Markdown 本地预览（侧边目录树 + 单页 / 整本 PDF 下载按钮） |
+| `qxw-serve webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
+| `qxw-serve file-web` | 📂 HTTP 文件共享（带 Basic Auth 鉴权，含目录浏览与打包下载） |
+| `qxw-serve image-web` | 🖼 图片画廊（缩略图 / Live Photo / RAW 预览） |
 
-### pdf 参数说明
+> 不再提供 FTP 文件服务。`qxw-gitbook pdf` 本地批量 PDF 功能已删除；如需批量转 PDF，请使用 `qxw-serve gitbook` 后在浏览器里点击"下载整本 PDF"。
 
-| 参数 | 缩写 | 默认值 | 说明 |
-|------|------|--------|------|
-| `--dir` | `-d` | `.` | Markdown 文件所在目录 |
-| `--output` | `-o` | (与源文件同目录) | PDF 输出目录 |
-| `--recursive` | `-r` | false | 递归处理子目录中的文件 |
+### qxw-serve gitbook
 
-### serve 参数说明
+启动本地 HTTP 服务预览 Markdown 文件，页面上直接提供 PDF 下载入口：
+
+- 每页右上角 **⬇ 下载本页 PDF** —— 将当前 `.md` 文件渲染为单个 PDF
+- 侧边栏顶部 **⬇ 下载整本 PDF** —— 把目录下全部 `.md`（递归）按路径顺序合并为一个 PDF
+
+```bash
+qxw-serve gitbook                # 预览当前目录（默认 8000 端口）
+qxw-serve gitbook -p 3000        # 指定端口
+qxw-serve gitbook -d docs/       # 预览 docs/ 目录
+qxw-serve gitbook -H 0.0.0.0     # 允许局域网访问
+```
+
+#### 参数说明
 
 | 参数 | 缩写 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -351,80 +335,59 @@ qxw-gitbook serve -p 3000 -d docs/
 | `--port` | `-p` | 8000 | 服务端口 |
 | `--host` | `-H` | 127.0.0.1 | 监听地址 |
 
-### summary 用法
+#### PDF 下载的依赖
 
-扫描目录结构，为每个包含 `README.md` 的目录自动生成：
-
-- **SUMMARY.md**：标题 + 目录结构
-- **INDEX.md**：README.md 内容 + 目录结构
+PDF 下载功能依赖 `weasyprint`。未安装时预览页面仍可正常使用，只有点击 PDF 下载按钮时才会返回 500 错误并提示安装方法：
 
 ```bash
-# 为当前目录生成
-qxw-gitbook summary
+# macOS
+brew install pango && pip install weasyprint
 
-# 指定目录和深度
-qxw-gitbook summary -d docs/ --depth 5
+# Linux (Debian/Ubuntu)
+sudo apt install libpango-1.0-0 && pip install weasyprint
+
+# 或一步到位
+pip install "qxw[pdf]"
 ```
 
-### summary 参数说明
+### qxw-serve webtool
 
-| 参数 | 缩写 | 默认值 | 说明 |
-|------|------|--------|------|
-| `--dir` | `-d` | `.` | 文档根目录 |
-| `--depth` | - | 3 | 目录层级深度 |
-
-### summary 特殊规则
-
-- 文件按数字前缀排序（如 `1.intro.md`、`2.setup.md`）
-- 标题含 `(todo)` 的文件/目录会被跳过
-- 目录下存在 `SUMMARY.md.skip` 文件时跳过该目录的生成
-
-## qxw-webtool
-
-开发者常用 Web 工具集，启动一个本地 HTTP 服务，在浏览器中提供多种实用工具。
-
-### 基本用法
+启动本地开发者 Web 工具集。
 
 ```bash
-# 启动服务（默认 9000 端口）
-qxw-webtool
-
-# 指定端口
-qxw-webtool -p 3000
-
-# 允许局域网访问
-qxw-webtool -H 0.0.0.0
+qxw-serve webtool                # 默认 9000 端口
+qxw-serve webtool -p 3000        # 指定端口
+qxw-serve webtool -H 0.0.0.0     # 允许局域网访问
 ```
 
-### 参数说明
+#### 参数说明
 
 | 参数 | 缩写 | 默认值 | 说明 |
 |------|------|--------|------|
 | `--port` | `-p` | 9000 | 服务端口 |
 | `--host` | `-H` | 127.0.0.1 | 监听地址 |
-| `--version` | - | - | 显示版本号 |
-| `--help` | - | - | 显示帮助信息 |
 
-### 功能列表
+#### 功能列表
 
-#### 文本对比
+##### 文本对比
 
 两段文本的 Unified Diff 差异比较，高亮显示新增（绿色）和删除（红色）行。
 
-#### JSON 格式化
+##### JSON 格式化
 
 - **格式化**：将 JSON 美化为缩进格式
 - **压缩**：将 JSON 压缩为单行
 - **校验**：检查 JSON 是否合法
+- **转义 / 去转义**：在 JSON 字符串字面量与原始字符串之间互转
 
-#### 时间戳转换
+##### 时间戳转换
 
 - 实时显示当前 Unix 时间戳
 - Unix 时间戳（秒/毫秒）→ 日期时间
 - 日期时间 → Unix 时间戳
 - 支持格式：`YYYY-MM-DD HH:MM:SS`、`YYYY-MM-DD`、`YYYY/MM/DD` 等
 
-#### 加解密
+##### 加解密
 
 | 功能 | 算法 | 说明 |
 |------|------|------|
@@ -435,64 +398,30 @@ qxw-webtool -H 0.0.0.0
 | 3DES | 3DES（CBC） | 对称加密，16/24 字节 Hex 密钥 |
 | RSA | RSA-2048/4096（OAEP+SHA256） | 非对称加密，支持密钥对生成 |
 | Ed25519 | Ed25519 | 非对称签名，支持密钥对生成 / 签名 / 验证 |
+| 证书解析 | X.509 PEM / Base64 DER | 解析证书信息（颁发者 / 有效期 / SAN / 指纹等） |
 
 对称加密约定：
 - 密钥和 IV 使用 Hex 格式输入
 - 加密输出为 Base64（CBC 模式下 IV 前置于密文）
 - 解密输入为 Base64（自动提取前置的 IV）
 
-#### URL 编解码
+##### URL 编解码 / Base64 编解码
 
-URL Encode / Decode 转换。
+分别提供 URL Encode / Decode 与 Base64 Encode / Decode 转换。
 
-#### Base64 编解码
+### qxw-serve file-web
 
-Base64 Encode / Decode 转换。
-
-## qxw-file-server
-
-文件服务器工具，支持通过 HTTP 或 FTP 协议快速共享目录文件。两种协议均内置鉴权保护。
-
-### 安装 FTP 依赖
-
-`http` 子命令开箱可用。`ftp` 子命令需要额外安装 `pyftpdlib`：
+通过 HTTP 协议共享目录文件，使用 HTTP Basic Auth 进行鉴权。
 
 ```bash
-pip install pyftpdlib
-
-# 或一步到位
-pip install "qxw[ftp]"
+qxw-serve file-web                       # 共享当前目录（8080 端口）
+qxw-serve file-web -d /tmp               # 共享 /tmp 目录
+qxw-serve file-web -p 9000               # 指定端口
+qxw-serve file-web -u user -P mypass     # 指定用户名和密码
+qxw-serve file-web -H 0.0.0.0            # 允许局域网访问
 ```
 
-### 基本用法
-
-```bash
-# 启动 HTTP 文件服务器（共享当前目录）
-qxw-file-server http
-
-# 启动 FTP 文件服务器
-qxw-file-server ftp
-
-# 指定共享目录
-qxw-file-server http -d /tmp
-qxw-file-server ftp -d /tmp
-
-# 指定用户名和密码
-qxw-file-server http -u myuser -P mypass
-qxw-file-server ftp -u myuser -P mypass
-
-# FTP 开启写入权限
-qxw-file-server ftp -w
-```
-
-### 子命令说明
-
-| 子命令 | 说明 |
-|--------|------|
-| `http` | 启动 HTTP 文件服务器（带 Basic Auth 鉴权） |
-| `ftp` | 启动 FTP 文件服务器（带用户鉴权） |
-
-### http 参数说明
+#### 参数说明
 
 | 参数 | 缩写 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -500,44 +429,48 @@ qxw-file-server ftp -w
 | `--port` | `-p` | 8080 | 服务端口 |
 | `--host` | `-H` | 127.0.0.1 | 监听地址 |
 | `--username` | `-u` | admin | 鉴权用户名 |
-| `--password` | `-P` | (自动生成) | 鉴权密码，不指定则自动生成随机密码 |
+| `--password` | `-P` | (自动生成) | 鉴权密码，不指定则启动时自动生成随机密码并打印 |
 
-### ftp 参数说明
+#### 鉴权说明
+
+- 不指定 `--password` 时，每次启动都会生成一个新的随机密码并打印到终端
+- 浏览器访问时会弹出 Basic Auth 登录窗口
+- 目录列表页支持 **⬇ 下载** 单文件与 **📦 打包下载** 整个子目录（zip 流式生成）
+
+### qxw-serve image-web
+
+启动图片浏览 HTTP 服务，提供缩略图画廊 + 灯箱预览。支持 Live Photo（同目录下同名图片 + 视频）播放以及 RAW 文件预览。
+
+```bash
+qxw-serve image-web                           # 浏览当前目录图片
+qxw-serve image-web -d ~/Photos               # 指定图片目录
+qxw-serve image-web -p 9000                   # 指定端口
+qxw-serve image-web -s 300 --thumb-quality 70 # 调整缩略图参数
+qxw-serve image-web --no-recursive            # 不递归扫描子目录
+```
+
+#### 参数说明
 
 | 参数 | 缩写 | 默认值 | 说明 |
 |------|------|--------|------|
-| `--dir` | `-d` | `.` | 共享目录路径 |
-| `--port` | `-p` | 2121 | 服务端口 |
-| `--host` | `-H` | 0.0.0.0 | 监听地址 |
-| `--username` | `-u` | admin | 鉴权用户名 |
-| `--password` | `-P` | (自动生成) | 鉴权密码，不指定则自动生成随机密码 |
-| `--writable` | `-w` | false | 允许上传 / 写入 / 删除文件 |
+| `--dir` | `-d` | `.` | 图片目录路径 |
+| `--port` | `-p` | 8080 | 服务端口 |
+| `--host` | `-H` | 127.0.0.1 | 监听地址 |
+| `--thumb-size` | `-s` | 400 | 缩略图尺寸（像素） |
+| `--thumb-quality` | - | 85 | 缩略图 JPEG 质量 (1-100) |
+| `--recursive` / `--no-recursive` | `-r` | `--recursive` | 是否递归扫描子目录 |
 
-### 鉴权说明
+#### 支持的格式
 
-- 不指定 `--password` 时，每次启动自动生成随机密码并打印在终端
-- HTTP 使用 Basic Auth 鉴权，浏览器访问时弹出登录窗口
-- FTP 使用标准 FTP 用户认证，客户端连接时需输入用户名和密码
-
-### 使用示例
-
-```bash
-# 在局域网内分享文件
-qxw-file-server http -d ~/Downloads
-
-# 仅本机访问
-qxw-file-server http -H 127.0.0.1
-
-# FTP 可写模式（允许上传）
-qxw-file-server ftp -d /tmp/shared -w -u upload -P secret123
-
-# 使用 FTP 客户端连接
-ftp admin@localhost 2121
-```
+- 图片：JPG / PNG / GIF / WebP / BMP / TIFF / HEIC
+- RAW：CR2 / CR3 / NEF / ARW / DNG / ORF / RW2 / PEF / RAF 等
+- Live Photo 关联视频：MOV / MP4
 
 ## qxw-image
 
-图片工具集，支持通过 HTTP 服务浏览图片画廊（含缩略图和 Live Photo）、将相机 RAW 文件批量转换为 JPG，以及将 SVG 批量栅格化为同名 PNG。
+图片工具集，支持将相机 RAW 文件批量转换为 JPG、将 SVG 批量栅格化为同名 PNG，以及对已有位图批量套用调色滤镜。
+
+> 图片画廊 HTTP 服务已迁移至 `qxw-serve image-web`。
 
 ### 安装图片处理依赖
 
@@ -554,39 +487,23 @@ pip install pillow-heif
 ### 基本用法
 
 ```bash
-# 启动图片浏览 HTTP 服务（当前目录）
-qxw-image http
-
-# 指定图片目录
-qxw-image http -d ~/Photos
-
 # 将当前目录 RAW 文件批量转为 JPG（输出到 ./jpg/）
 qxw-image raw
 
 # 将当前目录所有 SVG 批量转成同名 PNG（默认递归、2x 缩放、覆盖）
 qxw-image svg
+
+# 对已有位图（JPG/PNG 等）套用调色滤镜
+qxw-image filter -n fuji-cc -d ~/Photos/exports
 ```
 
 ### 子命令说明
 
 | 子命令 | 说明 |
 |--------|------|
-| `http` | 启动图片浏览 HTTP 服务（缩略图画廊，支持 Live Photo） |
 | `raw`  | 将相机导出的 RAW 图片批量转换为 JPG（可选 `--filter` 一步到位调色） |
 | `svg`  | 将 SVG 批量栅格化为同目录下的同名 PNG |
 | `filter` | 对已有位图（JPG/PNG/TIFF/HEIC 等）批量套用调色滤镜 |
-
-### http 参数说明
-
-| 参数 | 缩写 | 默认值 | 说明 |
-|------|------|--------|------|
-| `--dir` | `-d` | `.` | 图片目录路径 |
-| `--port` | `-p` | 8080 | 服务端口 |
-| `--host` | `-H` | 127.0.0.1 | 监听地址 |
-| `--thumb-size` | `-s` | 400 | 缩略图尺寸（像素） |
-| `--thumb-quality` | - | 85 | 缩略图 JPEG 质量 (1-100) |
-| `--recursive` | `-r` | true | 递归扫描子目录 |
-| `--no-recursive` | - | - | 不递归扫描子目录 |
 
 ### raw 参数说明
 
@@ -719,15 +636,6 @@ def _my_look(rgb: np.ndarray) -> np.ndarray:
 ### 使用示例
 
 ```bash
-# 浏览照片目录
-qxw-image http -d ~/Photos
-
-# 局域网分享图片
-qxw-image http -d ~/Photos -H 0.0.0.0
-
-# 调整缩略图参数
-qxw-image http -s 300 --thumb-quality 70
-
 # 将 ~/Photos 里的 RAW 文件（含子目录）批量转换为 JPG
 qxw-image raw -d ~/Photos -r
 
@@ -766,9 +674,13 @@ qxw-image svg -b dark
 
 ## qxw-markdown
 
-Markdown 文档工具集。目前提供 `wx` 子命令，用于将 Markdown 中的 PlantUML 代码围栏本地渲染为图片，并生成一份可直接粘贴到微信公众号编辑器的 `_wx.md` 副本。
+Markdown 文档工具集，提供以下子命令：
 
-### 渲染依赖
+- `wx`：将 Markdown 中的 PlantUML 代码围栏本地渲染为图片，并生成可直接粘贴到微信公众号编辑器的 `_wx.md` 副本
+- `cover`：通过 ZenMux 调用 Gemini 3 Pro Image Preview 为 Markdown 生成封面图
+- `summary`：为目录生成 Gitbook 风格的 `SUMMARY.md` / `INDEX.md` 目录文件
+
+### 渲染依赖（wx 子命令）
 
 本命令通过本地 `plantuml.jar`（subprocess 调用 `java -jar ...`）进行渲染，Python 负责协调、中文字体注入与格式转换。首次使用前需要：
 
@@ -787,6 +699,12 @@ qxw-markdown wx docs/foo.md -f svg -b transparent
 
 # 黑底 JPG + 高质量
 qxw-markdown wx docs/foo.md -f jpg -b black -q 95
+
+# 为当前目录生成 SUMMARY.md / INDEX.md
+qxw-markdown summary
+
+# 指定目录和深度
+qxw-markdown summary -d docs/ --depth 5
 ```
 
 ### 子命令说明
@@ -795,6 +713,7 @@ qxw-markdown wx docs/foo.md -f jpg -b black -q 95
 |--------|------|
 | `wx`   | 把 Markdown 中的 PlantUML 代码围栏替换为本地图片引用，生成 `_wx.md` 副本 |
 | `cover` | 通过 ZenMux 调用 Gemini 3 Pro Image Preview（Nano Banana Pro）为 Markdown 生成封面 PNG |
+| `summary` | 扫描目录结构，为每个包含 `README.md` 的目录生成 `SUMMARY.md` / `INDEX.md` |
 
 ### wx 参数说明
 
@@ -937,6 +856,38 @@ qxw-markdown cover docs/foo.md --style-prompt "minimalistic flat isometric illus
 - **想要其他视觉风格**：用 `--style-prompt` 整段替换；默认风格硬编码在 `qxw/library/services/cover_service.py::DEFAULT_COVER_STYLE_PROMPT`
 ```
 
+### summary 子命令
+
+扫描目录结构，为每个包含 `README.md` 的目录自动生成两份目录文件：
+
+- **SUMMARY.md**：标题 + 目录结构（Gitbook 经典形态）
+- **INDEX.md**：`README.md` 原始内容 + 目录结构（适合作为目录首页）
+
+```bash
+# 为当前目录生成
+qxw-markdown summary
+
+# 指定目录
+qxw-markdown summary -d docs/
+
+# 限制目录层级深度
+qxw-markdown summary -d docs/ --depth 5
+```
+
+#### 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | 文档根目录（必须包含 `README.md`） |
+| `--depth` | - | 5 | 目录层级深度 |
+
+#### 扫描规则
+
+- 文件按数字前缀排序（如 `1.intro.md`、`2.setup.md`）
+- 目录按同样规则排序，只有包含 `README.md` 的子目录会被列入目录
+- 标题中含 `(todo)` 的文件 / 目录会被跳过
+- 目录下存在 `SUMMARY.md.skip` 文件时整棵子树跳过
+
 ## qxw completion
 
 作为 `qxw` 命令组的子命令（原 `qxw-completion` 独立命令已合并）。为所有 `qxw*` 命令一次性生成并安装 Shell 子命令 / 选项补全脚本，支持 **zsh** 和 **bash**。装完后 `qxw <TAB>` 能补出 `list / hello / sbdqf / completion`，`qxw-image <TAB>` 能补出 `http / raw / svg / filter`，`qxw-chat --<TAB>` 能补出全部 `--provider / --model / ...` 选项。
@@ -1045,7 +996,7 @@ source "/Users/you/.config/qxw/completions/qxw.zsh"
 - **新增命令后补全里没看到？**
   直接再跑一次 `qxw completion install -y`，脚本文件整体覆盖；已注入的 rc 行无需再改。
 - **`qxw completion status` 报告 "跳过命令"？**
-  说明某个 `qxw-*` 命令在 import 阶段抛了异常（多半是可选依赖缺失，比如没装 `weasyprint` 却想给 `qxw-gitbook` 生成补全）。补全脚本对其他命令仍然有效；跳过原因会直接打印出来供定位。
+  说明某个 `qxw-*` 命令在 import 阶段抛了异常（多半是可选依赖缺失，比如未安装 `Pillow` / `rawpy` 却想给 `qxw-image` 生成补全）。补全脚本对其他命令仍然有效；跳过原因会直接打印出来供定位。
 
 ## qxw-str
 

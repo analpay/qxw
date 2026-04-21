@@ -11,7 +11,9 @@
 
 ### v0.2.0 (计划中)
 
-- [x] 图片工具命令 `qxw-image`（HTTP 图片浏览 + RAW 批量转 JPG）
+- [x] 图片工具命令 `qxw-image`（RAW 批量转 JPG / SVG 转 PNG / 调色滤镜）
+- [x] HTTP 服务命令 `qxw-serve`（gitbook 预览 / 开发者工具 / 文件共享 / 图片画廊）
+- [x] `qxw-markdown`：PlantUML 渲染 / AI 封面生成 / SUMMARY 目录生成
 - [ ] 配置管理命令 `qxw-config`
 - [ ] 项目初始化命令 `qxw-init`
 - [ ] 更多 TUI 交互组件
