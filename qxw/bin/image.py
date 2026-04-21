@@ -1,13 +1,16 @@
 """qxw-image 命令入口
 
-图片工具集，支持图片浏览 HTTP 服务、RAW 批量转换以及 SVG 转 PNG。
+图片工具集，支持图片浏览 HTTP 服务、RAW 批量转换、SVG 转 PNG 以及调色滤镜。
 
 用法:
     qxw-image http                        # 启动图片浏览服务（默认 8080 端口）
     qxw-image http --dir ~/Photos         # 指定图片目录
     qxw-image raw                         # 将当前目录 RAW 文件批量转换为 JPG
     qxw-image raw -d ~/Photos -r          # 递归处理子目录
+    qxw-image raw --filter fuji-cc        # RAW→JPG 时一步到位套用调色滤镜（单遍解码，画质更好）
     qxw-image svg                         # 将当前目录 SVG 文件批量转换为 PNG
+    qxw-image filter -n fuji-cc -d imgs   # 对已有位图（JPG/PNG/TIFF/HEIC 等）批量套用调色滤镜
+    qxw-image filter --list               # 列出所有已注册的调色滤镜
     qxw-image --help                      # 查看帮助
 """
 
@@ -449,7 +452,7 @@ class _ImageServerHandler(BaseHTTPRequestHandler):
 
 @click.group(
     name="qxw-image",
-    help="QXW 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG）",
+    help="QXW 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG / 调色滤镜）",
     epilog="使用 qxw-image <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
@@ -585,6 +588,8 @@ def http_command(
         "若同时显式指定了 --use-embedded 则直接报错退出。"
         "内置: fuji-cc（富士 Classic Chrome 胶片模拟近似）、"
         "ghibli（吉卜力动画水彩风近似：抬黑压白 + 暖调 + 柔和天空蓝 + 暖绿）。"
+        "注：此路径是 RAW→滤镜→JPG 单遍流水线、画质最佳；若想对已有 JPG/PNG 批量调色，"
+        "使用 `qxw-image filter` 子命令。"
     ),
 )
 @click.option(
@@ -967,6 +972,226 @@ def svg_command(
             console.print(f"，[red]{fail_count}[/] 失败", end="")
         console.print()
 
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(name="filter", help="对已有位图批量套用调色滤镜（JPG/PNG/WebP/BMP/TIFF/HEIC）")
+@click.option("--dir", "-d", "directory", default=".", show_default=True, help="输入目录")
+@click.option("--output", "-o", "output_dir", default=None, help="输出目录（默认 <源目录>/filtered）")
+@click.option("--recursive", "-r", is_flag=True, default=False, help="递归处理子目录")
+@click.option(
+    "--name",
+    "-n",
+    "filter_name",
+    default=None,
+    help="调色滤镜名（必填，除非用 --list）。可用名见 --list，可通过 register_filter 扩展。",
+)
+@click.option("--quality", "-q", default=92, show_default=True, type=int, help="JPEG 压缩质量 (1-100)")
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=False,
+    show_default=True,
+    help="是否覆盖已存在的输出文件",
+)
+@click.option(
+    "--workers",
+    "-j",
+    default=None,
+    type=int,
+    help="并行处理线程数（默认 min(CPU 核数, 4)；-j 1 表示串行）",
+)
+@click.option(
+    "--list",
+    "list_filters_flag",
+    is_flag=True,
+    default=False,
+    help="列出所有已注册的调色滤镜名后退出",
+)
+def filter_command(
+    directory: str,
+    output_dir: str | None,
+    recursive: bool,
+    filter_name: str | None,
+    quality: int,
+    overwrite: bool,
+    workers: int | None,
+    list_filters_flag: bool,
+) -> None:
+    """对已有位图批量套用调色滤镜
+
+    对 :func:`qxw.library.services.image_service.scan_filterable_images` 找到
+    的每个位图文件，调用 :func:`apply_filter_to_image` 执行"PIL 解码 → numpy →
+    apply_filter → JPEG 编码"一次，输出到 ``<output>/<rel_path_stem>.jpg``。
+
+    \b
+    不支持 RAW 输入：
+      如果你想对 RAW 文件一次到位地"解码 + 调色"，请使用：
+          qxw-image raw --filter <name>
+      这条路径是 RAW→滤镜→JPG 的单遍流水线，避免 JPEG 的二次编解码损失。
+
+    \b
+    支持格式：
+      JPG, PNG, WebP, BMP, TIFF, HEIC, HEIF
+
+    \b
+    示例:
+        qxw-image filter --list                          # 查看所有可用滤镜
+        qxw-image filter -n fuji-cc                      # 当前目录 → ./filtered/
+        qxw-image filter -n ghibli -d ~/Photos -r        # 递归处理子目录
+        qxw-image filter -n fuji-cc -o out --overwrite   # 指定输出目录并覆盖已有文件
+        qxw-image filter -n ghibli -q 95 -j 8            # 高质量 + 8 线程
+    """
+    try:
+        _require_pillow()
+
+        from qxw.library.services.color_filters import (
+            DEFAULT_FILTER_NAME,
+            list_filters,
+        )
+
+        if list_filters_flag:
+            console.print(f"🎛️  [bold]QXW 调色滤镜[/] v{__version__}")
+            console.print("已注册滤镜（default 为保留名，表示不调色）:\n")
+            for name in list_filters():
+                if name == DEFAULT_FILTER_NAME:
+                    console.print(f"  • [dim]{name}[/] [dim](无操作占位)[/]")
+                else:
+                    console.print(f"  • [magenta]{name}[/]")
+            console.print()
+            return
+
+        if not filter_name:
+            raise click.UsageError(
+                "缺少 --name/-n 参数。使用 --list 查看所有可用滤镜。"
+            )
+
+        filter_name_norm = filter_name.strip().lower()
+        available = list_filters()
+        if filter_name_norm not in available:
+            raise click.BadParameter(
+                f"未知的调色滤镜: {filter_name!r}。可选: {', '.join(available)}",
+                param_hint="--name",
+            )
+        if filter_name_norm == DEFAULT_FILTER_NAME:
+            raise click.BadParameter(
+                "filter 子命令不接受 default（default 是无操作占位名）。"
+                "请指定具体滤镜名，或用 --list 查看全部可选。",
+                param_hint="--name",
+            )
+
+        from qxw.library.services.image_service import (
+            apply_filter_to_image,
+            scan_filterable_images,
+        )
+
+        dir_path = Path(directory).resolve()
+        if not dir_path.is_dir():
+            raise click.BadParameter(f"目录不存在: {directory}")
+
+        out_path = Path(output_dir).resolve() if output_dir else dir_path / "filtered"
+
+        if workers is None:
+            workers = min(os.cpu_count() or 4, 4)
+        workers = max(1, workers)
+
+        console.print(f"🎛️  [bold]QXW Image Filter[/] v{__version__}")
+        console.print(f"📁 源目录: [cyan]{dir_path}[/]")
+        console.print(f"📂 输出目录: [cyan]{out_path}[/]")
+        console.print(f"🎨 调色滤镜: [magenta]{filter_name_norm}[/]")
+        console.print(f"📊 JPEG 质量: {quality}")
+        console.print(f"🧵 并行线程: {workers}")
+        console.print()
+
+        image_files = scan_filterable_images(dir_path, recursive=recursive)
+        if not image_files:
+            console.print("📭 未找到可调色的位图文件")
+            return
+
+        console.print(f"🔍 找到 [bold]{len(image_files)}[/] 个位图文件\n")
+
+        tasks: list[tuple[Path, Path]] = []
+        skip_count = 0
+        out_resolved = out_path.resolve()
+        for src in image_files:
+            # 递归扫描 + 输出在源目录内部时，跳过输出目录里的旧产物，避免把滤镜叠加到自己身上
+            try:
+                src.resolve().relative_to(out_resolved)
+                skip_count += 1
+                continue
+            except ValueError:
+                pass
+
+            rel_dir = src.relative_to(dir_path).parent
+            dst = out_path / rel_dir / f"{src.stem}.jpg"
+            if dst.exists() and not overwrite:
+                skip_count += 1
+                continue
+            tasks.append((src, dst))
+
+        success_count = 0
+        fail_count = 0
+
+        def _run_one(item: tuple[Path, Path]) -> tuple[Path, Exception | None]:
+            src, dst = item
+            try:
+                apply_filter_to_image(src, dst, filter_name_norm, quality=quality)
+                return src, None
+            except Exception as e:
+                return src, e
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("调色中...", total=len(image_files))
+            if skip_count:
+                progress.advance(task_id, skip_count)
+
+            if workers == 1 or len(tasks) <= 1:
+                for item in tasks:
+                    src, err = _run_one(item)
+                    if err is None:
+                        success_count += 1
+                    else:
+                        logger.warning("调色失败 %s: %s", src.name, err)
+                        fail_count += 1
+                    progress.advance(task_id)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [pool.submit(_run_one, item) for item in tasks]
+                    for future in as_completed(futures):
+                        src, err = future.result()
+                        if err is None:
+                            success_count += 1
+                        else:
+                            logger.warning("调色失败 %s: %s", src.name, err)
+                            fail_count += 1
+                        progress.advance(task_id)
+
+        console.print()
+        console.print(f"✅ 调色完成: [green]{success_count}[/] 成功", end="")
+        if skip_count:
+            console.print(f"，[yellow]{skip_count}[/] 跳过（已存在或输出即自身）", end="")
+        if fail_count:
+            console.print(f"，[red]{fail_count}[/] 失败", end="")
+        console.print()
+
+    except click.UsageError:
+        raise  # 交给 click 做格式化输出
     except QxwError as e:
         logger.error("命令执行失败: %s", e.message)
         click.echo(f"错误: {e.message}", err=True)

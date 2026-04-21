@@ -175,6 +175,10 @@ qxw-image raw -d ~/Photos -r
 # 导出 RAW 时套用富士 Classic Chrome 滤镜（自动走 rawpy 解码 + 调色）
 qxw-image raw -d ~/Photos --filter fuji-cc
 
+# 对已有 JPG/PNG 批量套滤镜（与 raw --filter 共享同一套插件）
+qxw-image filter --list                             # 查看所有可用滤镜
+qxw-image filter -n ghibli -d ~/Photos/exports      # 吉卜力风格，输出到 exports/filtered/
+
 # 将目录下所有 SVG 批量转成同名 PNG（默认递归、2x 缩放、覆盖同名文件、白底）
 qxw-image svg -d ./assets
 

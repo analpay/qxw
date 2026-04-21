@@ -182,7 +182,17 @@ def _warm_sunset(rgb: np.ndarray) -> np.ndarray:
   - 自动切换到 `--no-use-embedded`
   - 若用户显式传入 `--use-embedded`，CLI 以 `click.UsageError` 终止（退出码 2），避免静默覆盖用户意图
 
+### 两个使用入口
+
+相同的滤镜注册中心被两个 CLI 入口共享：
+
+| 入口 | 解码路径 | Service 函数 | 适用场景 |
+|------|----------|--------------|----------|
+| `qxw-image raw --filter <name>` | rawpy（解码 + 调色 + JPEG 一次成型） | `convert_raw(color_filter=...)` | 直接从 RAW 出成片，画质最佳 |
+| `qxw-image filter -n <name>` | PIL（位图解码 + 调色 + JPEG 重编码） | `apply_filter_to_image(...)` | 对已导出 JPG / 截图 / 手机图批量再调色 |
+
 相关代码：
-- 注册中心与内置 `fuji-cc`：`qxw/library/services/color_filters.py`
-- 调用点（解码后 → 滤镜 → 保存 JPEG）：`qxw/library/services/image_service.py` `convert_raw()`
-- CLI 参数校验与互斥检查：`qxw/bin/image.py` `raw_command()`
+- 注册中心与内置 `fuji-cc` / `ghibli`：`qxw/library/services/color_filters.py`
+- RAW 单遍路径：`qxw/library/services/image_service.py` `convert_raw()`
+- 位图路径：`qxw/library/services/image_service.py` `apply_filter_to_image()` + `scan_filterable_images()`
+- CLI：`qxw/bin/image.py` `raw_command()`（`--filter` 与 `--use-embedded` 互斥检查）与 `filter_command()`（`--list` / 递归时避免把滤镜叠加到自己身上的防呆）

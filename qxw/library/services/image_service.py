@@ -48,6 +48,12 @@ IMAGE_EXTENSIONS = frozenset(
 # Live Photo 关联的视频格式
 VIDEO_EXTENSIONS = frozenset({".mov", ".mp4"})
 
+# `qxw-image filter` 子命令可直接套用调色滤镜的位图格式（不含 RAW）
+FILTERABLE_IMAGE_EXTENSIONS = frozenset({
+    ".jpg", ".jpeg", ".png", ".webp", ".bmp",
+    ".tiff", ".tif", ".heic", ".heif",
+})
+
 # SVG 矢量图格式
 SVG_EXTENSIONS = frozenset({".svg"})
 
@@ -188,6 +194,24 @@ def scan_raw_files(directory: Path, recursive: bool = False) -> list[Path]:
     return sorted(raw_files, key=lambda x: x.name.lower())
 
 
+def scan_filterable_images(directory: Path, recursive: bool = False) -> list[Path]:
+    """扫描目录获取所有可进入 ``qxw-image filter`` 流水线的位图文件（不含 RAW）
+
+    仅返回 :data:`FILTERABLE_IMAGE_EXTENSIONS` 列出的常规位图格式；RAW 文件需要
+    先经过 ``qxw-image raw`` 解码成 JPG，或直接使用 ``qxw-image raw --filter``
+    一步到位，以避免二次编解码造成的画质损失。
+    """
+    directory = directory.resolve()
+    all_files = list(directory.rglob("*")) if recursive else list(directory.iterdir())
+    files = [
+        f for f in all_files
+        if f.is_file()
+        and f.suffix.lower() in FILTERABLE_IMAGE_EXTENSIONS
+        and not f.name.startswith(".")
+    ]
+    return sorted(files, key=lambda x: x.name.lower())
+
+
 # ============================================================
 # RAW 转 JPG
 # ============================================================
@@ -271,6 +295,70 @@ def convert_raw(
         rgb = apply_filter(rgb, color_filter)
 
     Image.fromarray(rgb).save(str(output_path), "JPEG", quality=quality, progressive=True)
+
+
+# ============================================================
+# 对已有位图套用调色滤镜
+# ============================================================
+
+
+def apply_filter_to_image(
+    src: Path,
+    dst: Path,
+    filter_name: str,
+    quality: int = DEFAULT_JPEG_QUALITY,
+) -> None:
+    """对已有位图文件应用命名调色滤镜，并以 JPEG 格式写入目标路径
+
+    与 :func:`convert_raw` 的 ``color_filter`` 参数共享同一个滤镜注册中心
+    （:mod:`qxw.library.services.color_filters`），但路径不同：
+    本函数**不碰 RAW**，只接受 :data:`FILTERABLE_IMAGE_EXTENSIONS` 列出的
+    位图格式（JPG/PNG/WebP/BMP/TIFF/HEIC）。
+
+    Args:
+        src: 源图片文件路径
+        dst: 目标 JPG 输出路径（若父目录不存在会自动创建）
+        filter_name: 调色滤镜名。``default`` 或未注册名会抛出 ValueError，
+            避免出现 "运行了半天没效果" 的静默陷阱
+        quality: JPEG 压缩质量 (1-100)
+
+    Raises:
+        ValueError: filter_name 为 default 或未注册
+        Exception: 文件打开 / 解码 / 编码失败
+    """
+    import numpy as np
+    from PIL import Image
+
+    from qxw.library.services.color_filters import (
+        DEFAULT_FILTER_NAME,
+        apply_filter,
+        get_filter,
+    )
+
+    fn = get_filter(filter_name)
+    if fn is None:
+        if (filter_name or "").strip().lower() == DEFAULT_FILTER_NAME:
+            raise ValueError(
+                f"{DEFAULT_FILTER_NAME!r} 是无操作占位名，请指定具体的滤镜名"
+            )
+        raise ValueError(f"未知的调色滤镜: {filter_name!r}")
+
+    suffix = src.suffix.lower()
+    if suffix in (".heic", ".heif"):
+        img = _open_heic_as_pil(src)
+        if img is None:
+            raise RuntimeError(f"无法打开 HEIC/HEIF 文件: {src}")
+    else:
+        img = Image.open(src)
+
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    rgb = np.asarray(img, dtype=np.uint8)
+    rgb = apply_filter(rgb, filter_name)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgb).save(str(dst), "JPEG", quality=quality, progressive=True)
 
 
 # ============================================================

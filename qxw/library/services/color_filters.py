@@ -1,8 +1,18 @@
 """调色滤镜插件系统
 
-提供一个可扩展的色彩滤镜注册中心，用于在 rawpy 解码得到 RGB 数组之后、
-保存为 JPEG 之前对像素进行二次调色，模拟不同相机 / 胶片的色彩风格
-（如富士 Classic Chrome）。
+提供一个可扩展的色彩滤镜注册中心，用于在 RGB 像素层做二次调色，模拟不同
+相机 / 胶片 / 动画的色彩风格（如富士 Classic Chrome、吉卜力水彩感）。
+
+使用入口
+--------
+- :func:`qxw.library.services.image_service.convert_raw`（由
+  ``qxw-image raw --filter <name>`` 调用）：RAW → rawpy 解码 → 调色 → JPEG，
+  单遍流水线，画质最佳
+- :func:`qxw.library.services.image_service.apply_filter_to_image`（由
+  ``qxw-image filter -n <name>`` 调用）：位图 → PIL 解码 → 调色 → JPEG，
+  适合对已导出 JPG / 截图 / 手机图批量再调色
+
+两个入口共享本模块的同一套插件注册表。
 
 插件约定
 --------
@@ -15,7 +25,8 @@
 扩展方式
 --------
 第三方包可在导入时调用 :func:`register_filter` 追加滤镜；命令行
-``--filter <name>`` 会在运行时按名称查找，因此只要在命令执行前完成注册即可。
+``--filter <name>`` / ``-n <name>`` 会在运行时按名称查找，因此只要在命令
+执行前完成注册即可。
 """
 
 from __future__ import annotations
