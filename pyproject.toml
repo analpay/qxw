@@ -55,6 +55,7 @@ qxw-webtool = "qxw.bin.webtool:main"
 qxw-file-server = "qxw.bin.file_server:main"
 qxw-image = "qxw.bin.image:main"
 qxw-markdown = "qxw.bin.markdown:main"
+qxw-completion = "qxw.bin.completion:main"
 
 [tool.setuptools.packages.find]
 include = ["qxw*"]

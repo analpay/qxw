@@ -16,6 +16,7 @@
 | `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
 | `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG） | ✅ 可用 |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成） | ✅ 可用 |
+| `qxw-completion` | 🔑 生成并安装 Shell 补全（zsh / bash） | ✅ 可用 |
 
 ## qxw
 
@@ -912,3 +913,110 @@ qxw-markdown cover docs/foo.md --style-prompt "minimalistic flat isometric illus
 - **正文太长报错 / 图像抓不到重点**：降低 `--truncate`（如 8000 / 3000）聚焦前半部分；或用 `--extra-prompt` 把核心关键词喂进去
 - **想要其他视觉风格**：用 `--style-prompt` 整段替换；默认风格硬编码在 `qxw/library/services/cover_service.py::DEFAULT_COVER_STYLE_PROMPT`
 ```
+
+## qxw-completion
+
+为所有 `qxw*` 命令一次性生成并安装 Shell 子命令 / 选项补全脚本，支持 **zsh** 和 **bash**。装完后 `qxw-image <TAB>` 能补出 `http / raw / svg / filter`，`qxw-chat --<TAB>` 能补出全部 `--provider / --model / ...` 选项。
+
+### 工作原理
+
+每个 `qxw*` 命令都是 Click 构建的，Click 原生支持 `_CMDNAME_COMPLETE=<shell>_source cmd` 机制生成补全函数。`qxw-completion` 的工作就是：
+
+1. 从 `qxw` 的 `console_scripts` entry points 里枚举所有 `qxw*` 命令（含 `qxw-completion` 自身）
+2. 对每个命令调用 Click 的 `click.shell_completion.get_completion_class(shell)` 生成单命令补全源码
+3. 把所有结果拼成一个文件 `~/.config/qxw/completions/qxw.<shell>`
+4. 在你的 shell rc 里追加一行 `source ~/.config/qxw/completions/qxw.<shell>`（被 `# >>> qxw-completion >>>` / `# <<< qxw-completion <<<` 包围，便于干净卸载）
+
+所以**新增 / 删除 / 修改命令后，只需要重跑一次 `qxw-completion install -y`**（脚本整体覆盖），shell 重载即可获得最新补全。
+
+### 基本用法
+
+```bash
+# 自动检测 $SHELL（zsh / bash），写入补全文件并在 rc 里追加 source 行
+qxw-completion install
+
+# 非交互：跳过 rc 修改前的确认提示
+qxw-completion install -y
+
+# 指定 shell（跨 shell 安装时有用）
+qxw-completion install --shell zsh
+qxw-completion install --shell bash -y
+
+# 仅打印脚本到 stdout，不落盘
+qxw-completion show --shell zsh | head -40
+qxw-completion show --shell bash > /tmp/qxw.bash
+
+# 查看当前安装状态
+qxw-completion status
+
+# 完全移除（删补全文件 + 从 rc 里剔除 source 块）
+qxw-completion uninstall
+qxw-completion uninstall -y
+```
+
+### 子命令概览
+
+| 子命令 | 说明 |
+|--------|------|
+| `install` | 生成补全脚本，写入 `~/.config/qxw/completions/qxw.<shell>`，并在 rc 中追加 source 行（改动前会提示确认，`-y` 跳过） |
+| `uninstall` | 删除补全脚本文件；移除 rc 中被 marker 包围的 source 块 |
+| `show` | 打印脚本到 stdout，不动磁盘（适合自己接管写入逻辑 / 调试） |
+| `status` | 展示：当前 shell、补全脚本路径和存在状态、rc 路径和注入状态、收录 / 跳过的命令列表 |
+
+### 参数说明
+
+所有子命令共享 `--shell` 选项，`install` / `uninstall` 额外支持 `-y`：
+
+| 参数 | 适用子命令 | 默认值 | 说明 |
+|------|-----------|--------|------|
+| `--shell` | 全部 | `auto` | 目标 shell，`zsh` / `bash` / `auto`（auto 从 `$SHELL` 推断） |
+| `--yes` / `-y` | install、uninstall | false | 跳过交互确认，适合脚本化调用 |
+
+### 典型流程
+
+```bash
+# 1. 安装（自动识别 zsh / bash）
+qxw-completion install
+
+# 2. 让当前 shell 立即生效
+source ~/.zshrc          # zsh
+# 或 source ~/.bash_profile / ~/.bashrc，或直接 exec zsh / exec bash
+
+# 3. 验证：按 TAB 键应能补全子命令 / 选项
+qxw-image <TAB><TAB>     # http / raw / svg / filter
+qxw-chat-provider <TAB>  # list / add / edit / delete / set-default / show / ping / ping-all
+qxw-markdown wx --<TAB>  # --format / --background / ...
+
+# 4. 以后新增 / 修改了 qxw 命令？再跑一遍 install 就好
+qxw-completion install -y
+```
+
+### RC 文件的选择
+
+| Shell | rc 路径 |
+|-------|---------|
+| zsh | `~/.zshrc` |
+| bash (macOS) | 优先 `~/.bash_profile`，存在同名 `~/.bashrc` 时回退 |
+| bash (Linux) | `~/.bashrc` |
+
+如果 rc 文件不存在，`install` 会按需创建。注入块示例：
+
+```bash
+# >>> qxw-completion >>>
+# Added by qxw-completion on 2026-04-21
+source "/Users/you/.config/qxw/completions/qxw.zsh"
+# <<< qxw-completion <<<
+```
+
+### 常见问题
+
+- **zsh + oh-my-zsh：补全没生效？**
+  oh-my-zsh 自带的 `compinit` 会在它的初始化阶段跑。我们注入的 source 行如果**放在 oh-my-zsh 加载之前**，zsh 还没把 `compdef` 定义出来，所以补全注册失败。解决：把 `# >>> qxw-completion >>>` 块整体剪到 `source $ZSH/oh-my-zsh.sh` 之后，或在块前加一行 `autoload -Uz compinit && compinit`。
+- **bash：看到 "Shell completion is not supported for Bash versions older than 4.4" 警告？**
+  这是 Click 的检测逻辑——macOS 自带的 `/bin/bash` 是 3.2，`brew install bash` 升级到 5.x 即可。`qxw-completion` 已在脚本生成阶段把该警告吞掉，但你在目标 bash 里 `source` 时仍可能看到 Click 的 complete-mode 行为不完整。
+- **想改到别的 rc 文件？**
+  目前没暴露 `--rc-file`。临时方案：用 `qxw-completion show --shell <shell> > somewhere/qxw.<shell>` + 自己在目标 rc 里写一行 `source somewhere/qxw.<shell>`，完全绕开我们的 rc 管理。
+- **新增命令后补全里没看到？**
+  直接再跑一次 `qxw-completion install -y`，脚本文件整体覆盖；已注入的 rc 行无需再改。
+- **`qxw-completion status` 报告 "跳过命令"？**
+  说明某个 `qxw-*` 命令在 import 阶段抛了异常（多半是可选依赖缺失，比如没装 `weasyprint` 却想给 `qxw-gitbook` 生成补全）。补全脚本对其他命令仍然有效；跳过原因会直接打印出来供定位。

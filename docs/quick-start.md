@@ -224,7 +224,29 @@ qxw-markdown cover docs/article.md -o out/cover.png --extra-prompt "突出网络
 
 默认风格：浅绿网格背景 / 青蓝结构与标签 / 橙绿色数据流箭头 / 精致 CPU/机架图标 / LaTeX 公式。可用 `--style-prompt` 整段替换主视觉描述。详见 [使用手册](user-guide.md#cover-子命令)。
 
-## 12. 下一步
+## 12. Shell 自动补全
+
+为所有 `qxw*` 命令一次性开启 zsh / bash 的子命令与选项 tab 补全：
+
+```bash
+# 自动检测 $SHELL，生成补全脚本并在 rc 末尾追加 source 行（改 rc 前有确认提示）
+qxw-completion install
+
+# 让当前 shell 立即生效
+source ~/.zshrc                # zsh
+# 或 exec zsh / exec bash
+
+# 验证
+qxw-image <TAB>                # 应补出 http / raw / svg / filter
+qxw-chat --<TAB>               # 应补出全部选项
+
+# 随时查看状态
+qxw-completion status
+```
+
+新增或修改命令后，再跑一次 `qxw-completion install -y` 即可刷新（脚本整体覆盖，无需卸载）。详见 [使用手册 · qxw-completion](user-guide.md#qxw-completion)。
+
+## 13. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

@@ -70,6 +70,7 @@ qxw-hello --name 开发者
 | `qxw-webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
 | `qxw-file-server` | 📂 文件服务器（HTTP / FTP 文件共享，支持鉴权） |
 | `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转 JPG） |
+| `qxw-completion` | 🔑 生成并安装 Shell 补全脚本（zsh / bash） |
 
 ## 项目结构
 
