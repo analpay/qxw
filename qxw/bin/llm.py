@@ -1,21 +1,28 @@
-"""qxw-chat-provider 命令入口
+"""qxw-llm 命令入口
 
-管理 AI 对话服务提供商（增删改查）。
+QXW AI 对话工具统一入口（合并自 qxw-chat / qxw-chat-provider）。
 
 用法:
-    qxw-chat-provider --tui               # TUI 管理界面（推荐）
-    qxw-chat-provider list                # 列出所有提供商
-    qxw-chat-provider add                 # 添加提供商
-    qxw-chat-provider show <name>         # 查看提供商详情
-    qxw-chat-provider edit <name>         # 编辑提供商
-    qxw-chat-provider delete <name>       # 删除提供商
-    qxw-chat-provider set-default <name>  # 设为默认提供商
+    qxw-llm chat                      # 与默认提供商进行交互式对话
+    qxw-llm chat --provider <name>    # 指定提供商对话
+    qxw-llm chat -m "你好"            # 单次对话
+    qxw-llm provider list             # 列出提供商
+    qxw-llm provider add ...          # 添加提供商
+    qxw-llm provider show <name>      # 查看提供商详情
+    qxw-llm provider edit <name>      # 编辑提供商
+    qxw-llm provider delete <name>    # 删除提供商
+    qxw-llm provider set-default <n>  # 设为默认提供商
+    qxw-llm provider ping [name]      # 测试提供商连接
+    qxw-llm provider ping-all         # 测试全部提供商连接
+    qxw-llm tui                       # 提供商 TUI 管理界面
 """
 
 import sys
 
 import click
 from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown
 from rich.table import Table
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -26,8 +33,9 @@ from qxw import __version__
 from qxw.library.base.exceptions import QxwError
 from qxw.library.base.logger import get_logger
 from qxw.library.managers.chat_provider_manager import SUPPORTED_PROVIDER_TYPES, ChatProviderManager
+from qxw.library.services.chat_service import ChatParams, ChatService, ChatSession
 
-logger = get_logger("qxw.chat-provider")
+logger = get_logger("qxw.llm")
 console = Console()
 manager = ChatProviderManager()
 
@@ -45,14 +53,89 @@ def _ensure_env() -> None:
             click.echo(f"  已初始化: {item}")
         click.echo("环境初始化完成\n")
 
-    import qxw.library.models  # noqa: F401
+    import qxw.library.models  # noqa: F401  # 确保模型注册到 Base.metadata
     from qxw.library.models.base import init_db
 
     init_db()
 
 
 # ============================================================
-# TUI 界面 (Textual)
+# chat 子命令
+# ============================================================
+
+
+def _resolve_provider(provider_name: str | None):
+    if provider_name:
+        provider = manager.get_by_name(provider_name)
+        if not provider:
+            click.echo(f"提供商 '{provider_name}' 不存在，使用 qxw-llm provider list 查看已配置的提供商。", err=True)
+            sys.exit(1)
+        return provider
+
+    provider = manager.get_default()
+    if not provider:
+        providers = manager.list_all()
+        if not providers:
+            click.echo("暂无已配置的提供商，请先使用 qxw-llm provider add 添加。", err=True)
+            sys.exit(1)
+        click.echo(
+            "未设置默认提供商，请使用 --provider 指定，或使用 qxw-llm provider set-default 设置默认。",
+            err=True,
+        )
+        sys.exit(1)
+    return provider
+
+
+def _run_interactive(session: ChatSession, service: ChatService) -> None:
+    provider = session.provider
+    console.print(
+        f"[bold cyan]已连接: {provider.name}[/] ([green]{provider.provider_type}[/] / {session.params.model})"
+    )
+    console.print("[dim]输入消息开始对话，Ctrl+C 或输入 /exit 退出，/clear 清空上下文[/]\n")
+
+    while True:
+        try:
+            user_input = console.input("[bold green]> [/]").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]对话结束[/]")
+            break
+
+        if not user_input:
+            continue
+        if user_input == "/exit":
+            console.print("[dim]对话结束[/]")
+            break
+        if user_input == "/clear":
+            session.messages.clear()
+            console.print("[dim]上下文已清空[/]\n")
+            continue
+
+        console.print()
+        try:
+            full_response = ""
+            with Live(console=console, vertical_overflow="visible") as live:
+                for chunk in service.stream_chat(session, user_input):
+                    full_response += chunk
+                    live.update(Markdown(full_response))
+            console.print()
+        except QxwError as e:
+            console.print(f"\n[red]错误: {e.message}[/]\n")
+
+
+def _run_single(session: ChatSession, service: ChatService, message: str) -> None:
+    try:
+        full_response = ""
+        with Live(console=console, vertical_overflow="visible") as live:
+            for chunk in service.stream_chat(session, message):
+                full_response += chunk
+                live.update(Markdown(full_response))
+    except QxwError as e:
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+
+
+# ============================================================
+# provider TUI 界面 (Textual)
 # ============================================================
 
 
@@ -415,32 +498,121 @@ class ChatProviderApp(App):
 
 
 @click.group(
-    name="qxw-chat-provider",
-    help="QXW AI 对话提供商管理",
-    epilog="使用 qxw-chat-provider <子命令> --help 查看各子命令的详细帮助。",
+    name="qxw-llm",
+    help="QXW AI 对话工具集合 - 对话 / 提供商管理",
+    epilog="使用 qxw-llm <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
-@click.option("--tui", is_flag=True, default=False, help="启用 TUI 管理界面")
-@click.version_option(version=__version__, prog_name="qxw-chat-provider", message="%(prog)s 版本 %(version)s")
+@click.version_option(version=__version__, prog_name="qxw-llm", message="%(prog)s 版本 %(version)s")
 @click.pass_context
-def main(ctx: click.Context, tui: bool) -> None:
-    _ensure_env()
-
-    if tui:
-        app = ChatProviderApp()
-        app.run()
-        return
-
+def main(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
 
-@main.command(name="list", help="列出所有已配置的提供商")
+# ------------------------------------------------------------
+# qxw-llm chat
+# ------------------------------------------------------------
+
+
+@main.command(
+    name="chat",
+    help="与已配置的提供商进行对话（交互式或单次）",
+    epilog="使用 qxw-llm provider 管理对话提供商。",
+)
+@click.option("--provider", "-p", "provider_name", default=None, help="指定提供商名称（默认使用已设置的默认提供商）")
+@click.option("--model", default=None, help="覆盖提供商的默认模型")
+@click.option("--temperature", "-t", type=float, default=None, help="覆盖默认温度参数")
+@click.option("--max-tokens", type=int, default=None, help="覆盖默认最大 token 数")
+@click.option("--top-p", type=float, default=None, help="覆盖默认 top_p 参数")
+@click.option("--system", "-s", "system_prompt", default=None, help="覆盖默认系统提示词")
+@click.option("--message", "-m", default=None, help="单次对话模式：发送一条消息并输出回复后退出")
+def chat_command(
+    provider_name: str | None,
+    model: str | None,
+    temperature: float | None,
+    max_tokens: int | None,
+    top_p: float | None,
+    system_prompt: str | None,
+    message: str | None,
+) -> None:
+    try:
+        _ensure_env()
+
+        provider = _resolve_provider(provider_name)
+        params = ChatParams.from_provider(
+            provider,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            system_prompt=system_prompt,
+        )
+
+        service = ChatService()
+        session = ChatSession(provider=provider, params=params)
+
+        if message:
+            _run_single(session, service, message)
+        else:
+            _run_interactive(session, service)
+
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+# ------------------------------------------------------------
+# qxw-llm tui
+# ------------------------------------------------------------
+
+
+@main.command(name="tui", help="启动提供商 TUI 管理界面")
+def tui_command() -> None:
+    try:
+        _ensure_env()
+        app = ChatProviderApp()
+        app.run()
+    except QxwError as e:
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+
+
+# ------------------------------------------------------------
+# qxw-llm provider ...
+# ------------------------------------------------------------
+
+
+@main.group(
+    name="provider",
+    help="QXW AI 对话提供商管理",
+    epilog="使用 qxw-llm provider <子命令> --help 查看各子命令的详细帮助。",
+    invoke_without_command=True,
+)
+@click.pass_context
+def provider_group(ctx: click.Context) -> None:
+    _ensure_env()
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@provider_group.command(name="list", help="列出所有已配置的提供商")
 def list_providers() -> None:
     try:
         providers = manager.list_all()
         if not providers:
-            click.echo("暂无已配置的提供商，使用 qxw-chat-provider add 添加。")
+            click.echo("暂无已配置的提供商，使用 qxw-llm provider add 添加。")
             return
 
         table = Table(title="AI 对话提供商列表")
@@ -466,7 +638,7 @@ def list_providers() -> None:
         sys.exit(e.exit_code)
 
 
-@main.command(name="add", help="添加一个新的提供商")
+@provider_group.command(name="add", help="添加一个新的提供商")
 @click.option("--name", "-n", required=True, help="提供商名称（唯一标识）")
 @click.option(
     "--type",
@@ -517,7 +689,7 @@ def add_provider(
         sys.exit(e.exit_code)
 
 
-@main.command(name="show", help="查看提供商详情")
+@provider_group.command(name="show", help="查看提供商详情")
 @click.argument("name")
 def show_provider(name: str) -> None:
     try:
@@ -550,7 +722,7 @@ def show_provider(name: str) -> None:
         sys.exit(e.exit_code)
 
 
-@main.command(name="edit", help="编辑提供商配置")
+@provider_group.command(name="edit", help="编辑提供商配置")
 @click.argument("name")
 @click.option("--type", "provider_type", type=click.Choice(list(SUPPORTED_PROVIDER_TYPES)), help="提供商类型")
 @click.option("--base-url", "-u", help="API 基础地址")
@@ -606,7 +778,7 @@ def edit_provider(
         sys.exit(e.exit_code)
 
 
-@main.command(name="delete", help="删除提供商")
+@provider_group.command(name="delete", help="删除提供商")
 @click.argument("name")
 @click.option("--yes", "-y", is_flag=True, default=False, help="跳过确认提示")
 def delete_provider(name: str, yes: bool) -> None:
@@ -629,7 +801,7 @@ def delete_provider(name: str, yes: bool) -> None:
         sys.exit(e.exit_code)
 
 
-@main.command(name="set-default", help="将指定提供商设为默认")
+@provider_group.command(name="set-default", help="将指定提供商设为默认")
 @click.argument("name")
 def set_default_provider(name: str) -> None:
     try:
@@ -643,8 +815,6 @@ def set_default_provider(name: str) -> None:
 
 def _ping_one(provider) -> tuple[bool, str]:
     import time
-
-    from qxw.library.services.chat_service import ChatParams, ChatService, ChatSession
 
     params = ChatParams(
         model=provider.model,
@@ -665,7 +835,7 @@ def _ping_one(provider) -> tuple[bool, str]:
         return False, f"✗ 连接失败: {e.message}"
 
 
-@main.command(name="ping", help="测试提供商连接是否正常（向模型发送最小请求）")
+@provider_group.command(name="ping", help="测试提供商连接是否正常（向模型发送最小请求）")
 @click.argument("name", required=False, default=None)
 def ping_provider(name: str | None) -> None:
     try:
@@ -691,12 +861,12 @@ def ping_provider(name: str | None) -> None:
         sys.exit(e.exit_code)
 
 
-@main.command(name="ping-all", help="测试所有已配置的提供商连接")
+@provider_group.command(name="ping-all", help="测试所有已配置的提供商连接")
 def ping_all_providers() -> None:
     try:
         providers = manager.list_all()
         if not providers:
-            click.echo("暂无已配置的提供商，使用 qxw-chat-provider add 添加。")
+            click.echo("暂无已配置的提供商，使用 qxw-llm provider add 添加。")
             return
 
         failed = 0

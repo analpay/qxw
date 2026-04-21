@@ -108,7 +108,7 @@ qxw-image --help
 
 ```bash
 # 添加一个 OpenAI 提供商
-qxw-chat-provider add \
+qxw-llm provider add \
   --name my-openai \
   --type openai \
   --base-url https://api.openai.com/v1 \
@@ -117,13 +117,16 @@ qxw-chat-provider add \
   --default
 
 # 验证连接是否正常
-qxw-chat-provider ping
+qxw-llm provider ping
+
+# 启动提供商 TUI 管理界面（可视化增删改查）
+qxw-llm tui
 
 # 开始交互式对话
-qxw-chat
+qxw-llm chat
 
 # 或发送单条消息
-qxw-chat -m "你好"
+qxw-llm chat -m "你好"
 ```
 
 ## 6. HTTP 服务集合（qxw-serve）
@@ -226,7 +229,8 @@ source ~/.zshrc                # zsh
 qxw <TAB>                      # 应补出 list / hello / sbdqf / completion
 qxw-image <TAB>                # 应补出 raw / svg / filter
 qxw-serve <TAB>                # 应补出 gitbook / webtool / file-web / image-web
-qxw-chat --<TAB>               # 应补出全部选项
+qxw-llm <TAB>                  # 应补出 chat / tui / provider
+qxw-llm provider <TAB>         # 应补出 list / add / show / edit / delete / ...
 
 # 随时查看状态
 qxw completion status

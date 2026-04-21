@@ -19,8 +19,7 @@
 
 | 命令 | 说明 | 状态 |
 |------|------|------|
-| `qxw-chat` | AI 对话工具 | ✅ 可用 |
-| `qxw-chat-provider` | AI 对话提供商管理 | ✅ 可用 |
+| `qxw-llm` | 🤖 AI 对话工具集合（对话 / 提供商管理 / TUI） | ✅ 可用 |
 | `qxw-serve` | 🌐 HTTP 服务集合（gitbook / webtool / file-web / image-web） | ✅ 可用 |
 | `qxw-image` | 📷 图片工具集（RAW 批量转换 / SVG 转 PNG / 调色滤镜） | ✅ 可用 |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） | ✅ 可用 |
@@ -34,6 +33,21 @@
 | `qxw-serve webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
 | `qxw-serve file-web` | 📂 HTTP 文件共享（带 Basic Auth 鉴权） |
 | `qxw-serve image-web` | 🖼 图片画廊（缩略图 / Live Photo / RAW 预览） |
+
+### qxw-llm 子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `qxw-llm chat` | 🗣 与已配置的提供商进行对话（交互式 / 单次） |
+| `qxw-llm tui` | 🖥 提供商 TUI 管理界面 |
+| `qxw-llm provider list` | 📋 列出所有已配置的提供商 |
+| `qxw-llm provider add` | ➕ 添加提供商 |
+| `qxw-llm provider show` | 🔎 查看提供商详情 |
+| `qxw-llm provider edit` | ✏️ 编辑提供商配置 |
+| `qxw-llm provider delete` | 🗑 删除提供商 |
+| `qxw-llm provider set-default` | ⭐ 设为默认提供商 |
+| `qxw-llm provider ping` | 📡 测试指定提供商连接 |
+| `qxw-llm provider ping-all` | 📡 测试所有提供商连接 |
 
 ## qxw
 
@@ -74,8 +88,7 @@ qxw <子命令> --help  # 查看子命令详细帮助
 │ qxw hello         │ QXW 工具集示例命令 - Hello World        │
 │ qxw list          │ 列出 QXW 工具集提供的所有命令            │
 │ qxw sbdqf         │ 🐭 一只老鼠从终端屏幕上飞速穿过          │
-│ qxw-chat          │ QXW AI 对话工具                         │
-│ qxw-chat-provider │ QXW AI 对话提供商管理                    │
+│ qxw-llm           │ QXW AI 对话工具集合（对话 / 提供商管理 / TUI） │
 │ ...               │ ...                                     │
 └───────────────────┴────────────────────────────────────────┘
 ```
@@ -162,14 +175,29 @@ qxw sbdqf
 - 动画期间屏蔽 SIGINT 信号，必须等老鼠跑完
 - 老鼠垂直居中显示，自动适配终端宽度
 
-## qxw-chat-provider
+## qxw-llm
 
-管理 AI 对话服务提供商，支持 OpenAI 和 Anthropic 两种类型。
+QXW AI 对话工具集合，合并自原 `qxw-chat` / `qxw-chat-provider`。通过子命令形式承载对话、提供商管理、TUI 管理界面。
 
-### TUI 管理界面
+### 子命令一览
+
+| 子命令 | 说明 |
+|--------|------|
+| `qxw-llm chat` | 🗣 与已配置的提供商进行对话（交互式 / 单次） |
+| `qxw-llm tui` | 🖥 提供商 TUI 管理界面（等同于原 `qxw-chat-provider --tui`） |
+| `qxw-llm provider list` | 📋 列出所有已配置的提供商 |
+| `qxw-llm provider add` | ➕ 添加提供商 |
+| `qxw-llm provider show <name>` | 🔎 查看提供商详情 |
+| `qxw-llm provider edit <name>` | ✏️ 编辑提供商配置 |
+| `qxw-llm provider delete <name>` | 🗑 删除提供商（支持 `-y` 跳过确认） |
+| `qxw-llm provider set-default <name>` | ⭐ 将指定提供商设为默认 |
+| `qxw-llm provider ping [name]` | 📡 测试提供商连接（不指定则使用默认提供商） |
+| `qxw-llm provider ping-all` | 📡 测试所有已配置的提供商连接 |
+
+### qxw-llm tui
 
 ```bash
-qxw-chat-provider --tui
+qxw-llm tui
 ```
 
 启动 TUI 管理界面后可通过快捷键操作：
@@ -178,18 +206,21 @@ qxw-chat-provider --tui
 |--------|------|
 | `A` | 添加提供商 |
 | `E` / `Enter` | 编辑选中的提供商 |
+| `C` | 复制选中的提供商 |
 | `D` | 删除选中的提供商 |
 | `S` | 将选中的提供商设为默认 |
 | `Q` | 退出 |
 
-### 命令行用法
+### qxw-llm provider
+
+支持 OpenAI 和 Anthropic 两种提供商类型。
 
 ```bash
 # 列出所有提供商
-qxw-chat-provider list
+qxw-llm provider list
 
 # 添加 OpenAI 提供商
-qxw-chat-provider add \
+qxw-llm provider add \
   --name my-openai \
   --type openai \
   --base-url https://api.openai.com/v1 \
@@ -198,7 +229,7 @@ qxw-chat-provider add \
   --default
 
 # 添加 Anthropic 提供商
-qxw-chat-provider add \
+qxw-llm provider add \
   --name my-claude \
   --type anthropic \
   --base-url https://api.anthropic.com \
@@ -206,41 +237,28 @@ qxw-chat-provider add \
   --model claude-sonnet-4-20250514
 
 # 查看提供商详情
-qxw-chat-provider show my-openai
+qxw-llm provider show my-openai
 
 # 编辑提供商
-qxw-chat-provider edit my-openai --temperature 0.5 --system-prompt "你是一个有帮助的助手"
+qxw-llm provider edit my-openai --temperature 0.5 --system-prompt "你是一个有帮助的助手"
 
 # 设为默认提供商
-qxw-chat-provider set-default my-claude
+qxw-llm provider set-default my-claude
 
 # 删除提供商
-qxw-chat-provider delete my-openai
+qxw-llm provider delete my-openai
 
 # 测试提供商连接（使用默认提供商）
-qxw-chat-provider ping
+qxw-llm provider ping
 
 # 测试指定提供商连接
-qxw-chat-provider ping my-openai
+qxw-llm provider ping my-openai
 
 # 测试所有提供商连接
-qxw-chat-provider ping-all
+qxw-llm provider ping-all
 ```
 
-### 子命令说明
-
-| 子命令 | 说明 |
-|--------|------|
-| `list` | 列出所有已配置的提供商 |
-| `add` | 添加一个新的提供商 |
-| `show <name>` | 查看提供商详情 |
-| `edit <name>` | 编辑提供商配置 |
-| `delete <name>` | 删除提供商（支持 `-y` 跳过确认） |
-| `set-default <name>` | 将指定提供商设为默认 |
-| `ping [name]` | 测试提供商连接是否正常（不指定则使用默认提供商） |
-| `ping-all` | 测试所有已配置的提供商连接 |
-
-### add 参数说明
+#### add 参数说明
 
 | 参数 | 缩写 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
@@ -255,30 +273,28 @@ qxw-chat-provider ping-all
 | `--system-prompt` | `-s` | 否 | (空) | 默认系统提示词 |
 | `--default` | - | 否 | false | 设为默认提供商 |
 
-## qxw-chat
+### qxw-llm chat
 
 与已配置的 AI 对话提供商进行交互式对话，支持流式输出。
 
-### 基本用法
-
 ```bash
 # 使用默认提供商开始交互式对话
-qxw-chat
+qxw-llm chat
 
 # 指定提供商
-qxw-chat --provider my-openai
+qxw-llm chat --provider my-openai
 
 # 覆盖默认参数
-qxw-chat --model gpt-4o-mini --temperature 0.3
+qxw-llm chat --model gpt-4o-mini --temperature 0.3
 
 # 单次对话模式（发送一条消息后退出）
-qxw-chat -m "用 Python 写一个快速排序"
+qxw-llm chat -m "用 Python 写一个快速排序"
 
 # 指定系统提示词
-qxw-chat --system "你是一个 Python 专家"
+qxw-llm chat --system "你是一个 Python 专家"
 ```
 
-### 参数说明
+#### 参数说明
 
 | 参数 | 缩写 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -290,7 +306,7 @@ qxw-chat --system "你是一个 Python 专家"
 | `--system` | `-s` | (提供商默认) | 覆盖默认系统提示词 |
 | `--message` | `-m` | - | 单次对话模式 |
 
-### 交互式对话命令
+#### 交互式对话命令
 
 | 命令 | 说明 |
 |------|------|
@@ -890,7 +906,7 @@ qxw-markdown summary -d docs/ --depth 5
 
 ## qxw completion
 
-作为 `qxw` 命令组的子命令（原 `qxw-completion` 独立命令已合并）。为所有 `qxw*` 命令一次性生成并安装 Shell 子命令 / 选项补全脚本，支持 **zsh** 和 **bash**。装完后 `qxw <TAB>` 能补出 `list / hello / sbdqf / completion`，`qxw-image <TAB>` 能补出 `http / raw / svg / filter`，`qxw-chat --<TAB>` 能补出全部 `--provider / --model / ...` 选项。
+作为 `qxw` 命令组的子命令（原 `qxw-completion` 独立命令已合并）。为所有 `qxw*` 命令一次性生成并安装 Shell 子命令 / 选项补全脚本，支持 **zsh** 和 **bash**。装完后 `qxw <TAB>` 能补出 `list / hello / sbdqf / completion`，`qxw-image <TAB>` 能补出 `http / raw / svg / filter`，`qxw-llm <TAB>` 能补出 `chat / tui / provider`。
 
 ### 工作原理
 
@@ -961,7 +977,8 @@ source ~/.zshrc          # zsh
 # 3. 验证：按 TAB 键应能补全子命令 / 选项
 qxw <TAB><TAB>           # list / hello / sbdqf / completion
 qxw-image <TAB><TAB>     # http / raw / svg / filter
-qxw-chat-provider <TAB>  # list / add / edit / delete / set-default / show / ping / ping-all
+qxw-llm <TAB><TAB>       # chat / tui / provider
+qxw-llm provider <TAB>   # list / add / edit / delete / set-default / show / ping / ping-all
 qxw-markdown wx --<TAB>  # --format / --background / ...
 
 # 4. 以后新增 / 修改了 qxw 命令？再跑一遍 install 就好

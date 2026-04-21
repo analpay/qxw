@@ -43,8 +43,7 @@ dev = [
 
 [project.scripts]
 qxw = "qxw.bin.commands:main"
-qxw-chat = "qxw.bin.chat:main"
-qxw-chat-provider = "qxw.bin.chat_provider:main"
+qxw-llm = "qxw.bin.llm:main"
 qxw-serve = "qxw.bin.serve:main"
 qxw-image = "qxw.bin.image:main"
 qxw-markdown = "qxw.bin.markdown:main"

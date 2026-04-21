@@ -77,8 +77,7 @@ qxw hello --name 开发者
 
 | 命令 | 说明 |
 |------|------|
-| `qxw-chat` | 🤖 AI 对话工具，支持 OpenAI / Anthropic 提供商 |
-| `qxw-chat-provider` | ⚙️ AI 对话提供商管理（增删改查） |
+| `qxw-llm` | 🤖 AI 对话工具集合（对话 / 提供商管理 / TUI） |
 | `qxw-serve` | 🌐 HTTP 服务集合（gitbook 预览 / 开发者工具 / 文件共享 / 图片画廊） |
 | `qxw-image` | 📷 图片工具集（RAW 批量转 JPG / SVG 转 PNG / 调色滤镜） |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） |
@@ -92,6 +91,21 @@ qxw hello --name 开发者
 | `qxw-serve webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
 | `qxw-serve file-web` | 📂 HTTP 文件共享（带 Basic Auth 鉴权） |
 | `qxw-serve image-web` | 🖼 图片画廊（缩略图 / Live Photo / RAW） |
+
+### qxw-llm 子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `qxw-llm chat` | 🗣 与已配置的提供商进行对话（交互式 / 单次） |
+| `qxw-llm tui` | 🖥 提供商 TUI 管理界面 |
+| `qxw-llm provider list` | 📋 列出所有已配置的提供商 |
+| `qxw-llm provider add` | ➕ 添加提供商 |
+| `qxw-llm provider show` | 🔎 查看提供商详情 |
+| `qxw-llm provider edit` | ✏️ 编辑提供商配置 |
+| `qxw-llm provider delete` | 🗑 删除提供商 |
+| `qxw-llm provider set-default` | ⭐ 设为默认提供商 |
+| `qxw-llm provider ping` | 📡 测试指定提供商连接 |
+| `qxw-llm provider ping-all` | 📡 测试所有提供商连接 |
 
 ## 项目结构
 

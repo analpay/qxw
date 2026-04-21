@@ -499,7 +499,7 @@ verify_install() {
     local all_ok=true
 
     # 获取所有注册的命令
-    local commands=("qxw" "qxw-chat" "qxw-chat-provider" "qxw-serve" "qxw-image" "qxw-markdown" "qxw-str")
+    local commands=("qxw" "qxw-llm" "qxw-serve" "qxw-image" "qxw-markdown" "qxw-str")
 
     for cmd in "${commands[@]}"; do
         if has_cmd "$cmd"; then
