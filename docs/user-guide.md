@@ -17,6 +17,7 @@
 | `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG） | ✅ 可用 |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成） | ✅ 可用 |
 | `qxw-completion` | 🔑 生成并安装 Shell 补全（zsh / bash） | ✅ 可用 |
+| `qxw-str` | 🔤 字符串工具集（长度统计等） | ✅ 可用 |
 
 ## qxw
 
@@ -1020,3 +1021,68 @@ source "/Users/you/.config/qxw/completions/qxw.zsh"
   直接再跑一次 `qxw-completion install -y`，脚本文件整体覆盖；已注入的 rc 行无需再改。
 - **`qxw-completion status` 报告 "跳过命令"？**
   说明某个 `qxw-*` 命令在 import 阶段抛了异常（多半是可选依赖缺失，比如没装 `weasyprint` 却想给 `qxw-gitbook` 生成补全）。补全脚本对其他命令仍然有效；跳过原因会直接打印出来供定位。
+
+## qxw-str
+
+字符串工具集。目前提供 `len` 子命令，用于统计输入字符串的长度（字符数 / UTF-8 字节数）。
+
+### 基本用法
+
+```bash
+# 直接传入字符串参数
+qxw-str len "hello"
+
+# 支持中文、emoji（按 Unicode 码点计算字符数）
+qxw-str len "你好，世界"
+
+# 从 stdin 读取（方便管道 / 文件喂入）
+echo -n "hello world" | qxw-str len
+cat README.md | qxw-str len
+```
+
+### 子命令概览
+
+| 子命令 | 说明 |
+|--------|------|
+| `len` | 统计输入字符串的字符数（Unicode 码点）与 UTF-8 字节数 |
+
+### len 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `<text>` | - | - | 要统计的字符串（位置参数，可选；缺省时从 stdin 读取） |
+| `--quiet` | `-q` | false | 仅输出字符数（纯数字），便于脚本 `$(...)` 捕获 |
+| `--bytes` | `-b` | false | 仅输出 UTF-8 字节数（纯数字），便于脚本 `$(...)` 捕获 |
+| `--help` | - | - | 显示帮助信息 |
+
+`--quiet` 与 `--bytes` 互斥；同时指定会以错误码 2 退出。
+
+### 输出示例
+
+默认输出一张 Rich 表格，清晰展示两个指标：
+
+```
+$ qxw-str len "你好世界"
+   字符串长度统计
+┌──────────────┬────┐
+│ 字符数        │ 4  │
+│ UTF-8 字节数  │ 12 │
+└──────────────┴────┘
+```
+
+脚本化场景下用 `-q` / `-b` 拿到纯数字：
+
+```bash
+# 获取字符数
+LEN=$(qxw-str len -q "你好世界")
+echo "共 $LEN 个字符"     # 共 4 个字符
+
+# 获取字节数
+BYTES=$(qxw-str len -b "你好世界")
+echo "占用 $BYTES 字节"   # 占用 12 字节
+```
+
+### 统计口径
+
+- **字符数**：Python `len(str)`，按 Unicode 码点计算。一个中文汉字计 1，常见 emoji 计 1（但组合 emoji 如 👨‍👩‍👧‍👦 会被拆成多个码点）
+- **UTF-8 字节数**：`str.encode("utf-8")` 后的字节长度。ASCII 字符 1 字节、中文 3 字节、大部分 emoji 4 字节

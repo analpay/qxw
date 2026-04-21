@@ -56,6 +56,7 @@ qxw-file-server = "qxw.bin.file_server:main"
 qxw-image = "qxw.bin.image:main"
 qxw-markdown = "qxw.bin.markdown:main"
 qxw-completion = "qxw.bin.completion:main"
+qxw-str = "qxw.bin.str_cmd:main"
 
 [tool.setuptools.packages.find]
 include = ["qxw*"]

@@ -246,7 +246,23 @@ qxw-completion status
 
 新增或修改命令后，再跑一次 `qxw-completion install -y` 即可刷新（脚本整体覆盖，无需卸载）。详见 [使用手册 · qxw-completion](user-guide.md#qxw-completion)。
 
-## 13. 下一步
+## 13. 字符串工具
+
+```bash
+# 统计字符串的字符数（Unicode 码点）与 UTF-8 字节数
+qxw-str len "hello"
+qxw-str len "你好，世界"
+
+# 从 stdin 读取（支持管道 / 文件）
+echo -n "hello world" | qxw-str len
+cat README.md | qxw-str len
+
+# 纯数字输出，方便脚本捕获
+LEN=$(qxw-str len -q "你好世界")      # 字符数
+BYTES=$(qxw-str len -b "你好世界")    # UTF-8 字节数
+```
+
+## 14. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令
