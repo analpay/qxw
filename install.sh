@@ -410,21 +410,22 @@ get_project_dir() {
 install_qxw_pipx() {
     step "通过 pipx 安装 QXW"
 
-    local pipx_args=("install" "${PROJECT_DIR}")
-
-    if [ "$FORCE" = true ]; then
-        pipx_args=("install" "${PROJECT_DIR}" "--force")
+    # --force 模式下先完整卸载：pipx 的 --force 只重装包文件，
+    # 不会清理上一次安装遗留的 entry-point shim（旧的 qxw-* 命令会继续留在 PATH 上），
+    # 所以走 uninstall → install 才能拿到干净的 bin 目录。
+    if [ "$FORCE" = true ] && pipx list 2>/dev/null | grep -q "package qxw "; then
+        info "检测到 --force，先卸载已有安装..."
+        pipx uninstall qxw || true
     fi
 
-    # 指定 Python 版本
-    pipx_args+=("--python" "$PYTHON_CMD")
+    local pipx_args=("install" "${PROJECT_DIR}" "--python" "$PYTHON_CMD")
 
     info "执行: pipx ${pipx_args[*]}"
     if pipx "${pipx_args[@]}"; then
         success "QXW 通过 pipx 安装成功"
     else
         # 已安装时的友好提示
-        if pipx list 2>/dev/null | grep -q "qxw"; then
+        if pipx list 2>/dev/null | grep -q "package qxw "; then
             warn "QXW 已安装，如需重装请使用 --force 参数"
             return 0
         fi

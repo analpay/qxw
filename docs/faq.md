@@ -58,6 +58,29 @@ export LANG=en_US.UTF-8
 
 在 TUI 界面中按 `D` 键切换。
 
+### Q: 通过 `pipx install . --force` 重装后，旧的 `qxw-gitbook` / `qxw-webtool` / `qxw-file-server` 仍然能执行？
+
+pipx 的 `--force` 在 venv 已存在时只重装包文件，**不会清理**上一次安装遗留下来的 entry-point shim。已删除命令对应的 `~/.local/bin/qxw-xxx` 和 pipx 的 apps 跟踪条目会继续残留，旧命令仍能拉起旧代码路径。
+
+干净做法：先彻底卸载再装。
+
+```bash
+pipx uninstall qxw
+pipx install /path/to/qxw
+```
+
+如果卸载后 `~/.local/bin/qxw-*` 仍然有残留（悬空 symlink 指向已删除的 venv），手动清掉即可：
+
+```bash
+# 这些只是指向已不存在 venv 的 symlink，直接删安全
+for f in qxw-gitbook qxw-webtool qxw-file-server qxw-hello qxw-sbdqf qxw-completion; do
+    rm -f ~/.local/bin/$f
+done
+pipx install /path/to/qxw
+```
+
+或者直接用项目自带的 `bash install.sh --force`，它内部已经改成"先 uninstall 再 install"。
+
 ### Q: 原来的 `qxw-gitbook` / `qxw-webtool` / `qxw-file-server` 命令不见了？
 
 从本版本起，这三个命令被合并到统一入口 `qxw-serve` 下：
