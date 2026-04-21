@@ -1,11 +1,17 @@
 """qxw 命令入口
 
-列出 QXW 工具集提供的所有命令。
-通过读取已安装包的元数据，动态获取所有注册的命令入口并展示。
+QXW 工具集的主命令。作为 click.group 承载若干内置子命令：
+
+- ``qxw list``       列出 QXW 工具集提供的所有命令（含子命令 + 独立命令）
+- ``qxw hello``      示例命令（原 qxw-hello）
+- ``qxw sbdqf``      🐭 老鼠穿越动画（原 qxw-sbdqf）
+- ``qxw completion`` Shell 补全管理（原 qxw-completion）
 
 用法:
-    qxw          # 列出所有命令
-    qxw --help   # 查看帮助信息
+    qxw                 # 显示帮助（含子命令列表）
+    qxw list            # 列出所有命令
+    qxw hello --tui     # 调用子命令
+    qxw --help          # 查看帮助信息
 """
 
 import sys
@@ -16,6 +22,9 @@ from rich.console import Console
 from rich.table import Table
 
 from qxw import __version__
+from qxw.bin.completion import main as _completion_group
+from qxw.bin.hello import main as _hello_command
+from qxw.bin.sbdqf import main as _sbdqf_command
 from qxw.library.base.exceptions import QxwError
 from qxw.library.base.logger import get_logger
 
@@ -29,23 +38,33 @@ console = Console()
 
 
 def _collect_commands() -> list[tuple[str, str]]:
-    """从已安装包的元数据中收集所有命令及其说明
+    """收集 qxw 的所有子命令以及 qxw-* 独立命令
 
-    遍历 qxw 包注册的 console_scripts 入口点，
-    尝试加载对应的 Click 命令对象以提取帮助文本。
+    - qxw 子命令：从 main.commands 直接读取
+    - 独立命令：从已安装包的 console_scripts 入口点枚举（跳过 qxw 自己）
 
     Returns:
         按命令名排序的 (命令名, 说明) 列表
     """
+    commands: list[tuple[str, str]] = []
+
+    # qxw 的子命令
+    for name, cmd in main.commands.items():
+        help_text = (getattr(cmd, "help", "") or "").split("\n")[0].strip()
+        commands.append((f"qxw {name}", help_text))
+
+    # qxw-* 独立命令
     try:
         dist = distribution("qxw")
     except PackageNotFoundError:
-        logger.warning("qxw 包未安装，无法读取命令列表")
-        return []
+        logger.warning("qxw 包未安装，无法读取独立命令列表")
+        commands.sort(key=lambda x: x[0])
+        return commands
 
-    commands: list[tuple[str, str]] = []
     for ep in dist.entry_points:
         if ep.group != "console_scripts":
+            continue
+        if ep.name == "qxw" or not ep.name.startswith("qxw-"):
             continue
 
         help_text = ""
@@ -67,26 +86,42 @@ def _collect_commands() -> list[tuple[str, str]]:
 # ============================================================
 
 
-@click.command(
+@click.group(
     name="qxw",
-    help="列出 QXW 工具集提供的所有命令",
-    epilog="使用 <命令> --help 查看各命令的详细用法。",
+    help="QXW 通用开发命令行工具集合",
+    epilog="使用 qxw <子命令> --help 查看各子命令的详细用法；qxw list 可列出全部命令。",
+    invoke_without_command=True,
 )
 @click.version_option(
     version=__version__,
     prog_name="qxw",
     message="%(prog)s 版本 %(version)s",
 )
-def main() -> None:
-    """列出 QXW 工具集提供的所有命令
+@click.pass_context
+def main(ctx: click.Context) -> None:
+    """QXW 命令主入口
 
-    从已安装包的元数据中读取所有注册的命令入口，
-    以表格形式展示命令名称和简要说明。
+    不带子命令时等同于 ``qxw --help``。
+    """
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@main.command(
+    name="list",
+    help="列出 QXW 工具集提供的所有命令（含 qxw 子命令和 qxw-* 独立命令）",
+)
+def list_command() -> None:
+    """列出 QXW 工具集所有可用命令
+
+    \b
+    输出两类命令：
+        - qxw 子命令（list / hello / sbdqf / completion）
+        - qxw-* 独立命令（chat / image / markdown / ...）
 
     \b
     示例:
-        qxw              # 列出所有命令
-        qxw --version    # 查看版本号
+        qxw list                 # 列出所有命令
     """
     try:
         commands = _collect_commands()
@@ -116,6 +151,15 @@ def main() -> None:
         logger.exception("未预期的错误")
         click.echo(f"未预期的错误: {e}", err=True)
         sys.exit(1)
+
+
+# ============================================================
+# 挂载原先独立的命令为子命令
+# ============================================================
+
+main.add_command(_hello_command, name="hello")
+main.add_command(_sbdqf_command, name="sbdqf")
+main.add_command(_completion_group, name="completion")
 
 
 if __name__ == "__main__":

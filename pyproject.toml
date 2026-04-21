@@ -46,8 +46,6 @@ dev = [
 
 [project.scripts]
 qxw = "qxw.bin.commands:main"
-qxw-hello = "qxw.bin.hello:main"
-qxw-sbdqf = "qxw.bin.sbdqf:main"
 qxw-chat = "qxw.bin.chat:main"
 qxw-chat-provider = "qxw.bin.chat_provider:main"
 qxw-gitbook = "qxw.bin.gitbook:main"
@@ -55,7 +53,6 @@ qxw-webtool = "qxw.bin.webtool:main"
 qxw-file-server = "qxw.bin.file_server:main"
 qxw-image = "qxw.bin.image:main"
 qxw-markdown = "qxw.bin.markdown:main"
-qxw-completion = "qxw.bin.completion:main"
 qxw-str = "qxw.bin.str_cmd:main"
 
 [tool.setuptools.packages.find]

@@ -4,11 +4,21 @@
 
 ## 命令概览
 
+`qxw` 是命令组主入口，内置若干子命令；其余独立命令以 `qxw-*` 形式分布。
+
+### qxw 命令组子命令
+
+| 子命令 | 说明 | 状态 |
+|--------|------|------|
+| `qxw list` | 列出所有可用命令（原 `qxw` 列表功能） | ✅ 可用 |
+| `qxw hello` | 示例命令，验证安装（原 `qxw-hello`） | ✅ 可用 |
+| `qxw sbdqf` | 老鼠穿越动画（原 `qxw-sbdqf`） | ✅ 可用 |
+| `qxw completion` | 🔑 生成并安装 Shell 补全（原 `qxw-completion`） | ✅ 可用 |
+
+### qxw-* 独立命令
+
 | 命令 | 说明 | 状态 |
 |------|------|------|
-| `qxw` | 列出所有可用命令 | ✅ 可用 |
-| `qxw-hello` | 示例命令，验证安装 | ✅ 可用 |
-| `qxw-sbdqf` | 老鼠穿越动画（致敬 sl 命令） | ✅ 可用 |
 | `qxw-chat` | AI 对话工具 | ✅ 可用 |
 | `qxw-chat-provider` | AI 对话提供商管理 | ✅ 可用 |
 | `qxw-gitbook` | Markdown 文档工具（PDF 转换 / 本地预览） | ✅ 可用 |
@@ -16,18 +26,28 @@
 | `qxw-file-server` | 文件服务器（HTTP / FTP 文件共享，支持鉴权） | ✅ 可用 |
 | `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转换 / SVG 转 PNG） | ✅ 可用 |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成） | ✅ 可用 |
-| `qxw-completion` | 🔑 生成并安装 Shell 补全（zsh / bash） | ✅ 可用 |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） | ✅ 可用 |
 
 ## qxw
 
-列出 QXW 工具集提供的所有命令。从已安装包的元数据中动态读取命令列表，以表格形式展示。
+QXW 工具集的主命令。作为 Click 命令组承载若干内置子命令（`list` / `hello` / `sbdqf` / `completion`）。
 
 ### 基本用法
 
 ```bash
-qxw
+qxw                 # 显示帮助（列出子命令）
+qxw list            # 列出所有已注册命令（子命令 + 独立命令）
+qxw <子命令> --help  # 查看子命令详细帮助
 ```
+
+### 子命令概览
+
+| 子命令 | 说明 |
+|--------|------|
+| `list` | 列出 QXW 工具集所有命令（含 qxw 子命令和 qxw-* 独立命令） |
+| `hello` | 示例命令，验证安装 |
+| `sbdqf` | 🐭 老鼠穿越动画 |
+| `completion` | 🔑 生成 / 安装 / 卸载 Shell 补全脚本 |
 
 ### 参数说明
 
@@ -36,30 +56,30 @@ qxw
 | `--version` | 显示版本号 |
 | `--help` | 显示帮助信息 |
 
-### 输出示例
+### qxw list 输出示例
 
 ```
-       QXW 命令列表 (v0.1.0)
-┌───────────────────┬──────────────────────┐
-│ 命令              │ 说明                  │
-├───────────────────┼──────────────────────┤
-│ qxw               │ 列出所有可用命令       │
-│ qxw-hello         │ QXW 工具集示例命令     │
-│ qxw-sbdqf         │ 🐭 老鼠穿越动画       │
-│ qxw-chat          │ 🤖 AI 对话工具        │
-│ qxw-chat-provider │ AI 对话提供商管理      │
-└───────────────────┴──────────────────────┘
-
-共 5 个命令，使用 <命令> --help 查看详细用法。
+                        QXW 命令列表 (v0.1.0)
+┌───────────────────┬────────────────────────────────────────┐
+│ 命令              │ 说明                                    │
+├───────────────────┼────────────────────────────────────────┤
+│ qxw completion    │ 为所有 qxw* 命令生成并安装 Shell 补全   │
+│ qxw hello         │ QXW 工具集示例命令 - Hello World        │
+│ qxw list          │ 列出 QXW 工具集提供的所有命令            │
+│ qxw sbdqf         │ 🐭 一只老鼠从终端屏幕上飞速穿过          │
+│ qxw-chat          │ QXW AI 对话工具                         │
+│ qxw-chat-provider │ QXW AI 对话提供商管理                    │
+│ ...               │ ...                                     │
+└───────────────────┴────────────────────────────────────────┘
 ```
 
-## qxw-hello
+## qxw hello
 
-示例命令，用于验证 QXW 工具集安装是否正确。
+示例命令，用于验证 QXW 工具集安装是否正确。作为 `qxw` 命令组的子命令。
 
 ### 环境初始化
 
-首次运行 `qxw-hello` 时，会自动检测运行环境是否就绪。如果尚未初始化，将自动完成以下操作：
+首次运行 `qxw hello` 时，会自动检测运行环境是否就绪。如果尚未初始化，将自动完成以下操作：
 
 - 创建配置目录 `~/.config/qxw/`
 - 生成配置文件 `~/.config/qxw/setting.json`（基于内置模板）
@@ -72,10 +92,10 @@ qxw
 
 ```bash
 # 命令行模式（默认）
-qxw-hello
+qxw hello
 
 # TUI 交互模式
-qxw-hello --tui
+qxw hello --tui
 ```
 
 ### 参数说明
@@ -91,13 +111,13 @@ qxw-hello --tui
 
 ```bash
 # 自定义问候对象
-qxw-hello --name 开发者
+qxw hello --name 开发者
 
 # 查看版本
-qxw-hello --version
+qxw hello --version
 
 # 查看帮助
-qxw-hello --help
+qxw hello --help
 ```
 
 ### TUI 界面快捷键
@@ -107,24 +127,26 @@ qxw-hello --help
 | `Q` | 退出 |
 | `D` | 切换暗色/亮色主题 |
 
-## qxw-sbdqf
+## qxw sbdqf
 
-老鼠穿越动画命令，致敬经典的 `sl` 命令。一只 ASCII 老鼠从终端屏幕右边飞速跑到左边。
+老鼠穿越动画命令，致敬经典的 `sl` 命令。一只 ASCII 老鼠从终端屏幕右边飞速跑到左边。作为 `qxw` 命令组的子命令。
 
 和 `sl` 一样，动画期间 Ctrl+C 无法中断——你必须耐心等待老鼠跑完全程！
 
 ### 基本用法
 
 ```bash
-qxw-sbdqf
+qxw sbdqf
 ```
 
 ### 参数说明
 
-| 参数 | 说明 |
-|------|------|
-| `--version` | 显示版本号 |
-| `--help` | 显示帮助信息 |
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--rounds` | `-r` | 1 | 老鼠跑过屏幕的轮次（不填则跑 1 轮） |
+| `--duration` | `-d` | 不限 | 动画最长持续时间（秒） |
+| `--version` | - | - | 显示版本号 |
+| `--help` | - | - | 显示帮助信息 |
 
 ### 动画说明
 
@@ -915,44 +937,46 @@ qxw-markdown cover docs/foo.md --style-prompt "minimalistic flat isometric illus
 - **想要其他视觉风格**：用 `--style-prompt` 整段替换；默认风格硬编码在 `qxw/library/services/cover_service.py::DEFAULT_COVER_STYLE_PROMPT`
 ```
 
-## qxw-completion
+## qxw completion
 
-为所有 `qxw*` 命令一次性生成并安装 Shell 子命令 / 选项补全脚本，支持 **zsh** 和 **bash**。装完后 `qxw-image <TAB>` 能补出 `http / raw / svg / filter`，`qxw-chat --<TAB>` 能补出全部 `--provider / --model / ...` 选项。
+作为 `qxw` 命令组的子命令（原 `qxw-completion` 独立命令已合并）。为所有 `qxw*` 命令一次性生成并安装 Shell 子命令 / 选项补全脚本，支持 **zsh** 和 **bash**。装完后 `qxw <TAB>` 能补出 `list / hello / sbdqf / completion`，`qxw-image <TAB>` 能补出 `http / raw / svg / filter`，`qxw-chat --<TAB>` 能补出全部 `--provider / --model / ...` 选项。
 
 ### 工作原理
 
-每个 `qxw*` 命令都是 Click 构建的，Click 原生支持 `_CMDNAME_COMPLETE=<shell>_source cmd` 机制生成补全函数。`qxw-completion` 的工作就是：
+每个 `qxw` / `qxw-*` 命令都是 Click 构建的，Click 原生支持 `_CMDNAME_COMPLETE=<shell>_source cmd` 机制生成补全函数。`qxw completion` 的工作就是：
 
-1. 从 `qxw` 的 `console_scripts` entry points 里枚举所有 `qxw*` 命令（含 `qxw-completion` 自身）
+1. 从 `qxw` 的 `console_scripts` entry points 里枚举所有 `qxw` 主命令及 `qxw-*` 独立命令
 2. 对每个命令调用 Click 的 `click.shell_completion.get_completion_class(shell)` 生成单命令补全源码
 3. 把所有结果拼成一个文件 `~/.config/qxw/completions/qxw.<shell>`
 4. 在你的 shell rc 里追加一行 `source ~/.config/qxw/completions/qxw.<shell>`（被 `# >>> qxw-completion >>>` / `# <<< qxw-completion <<<` 包围，便于干净卸载）
 
-所以**新增 / 删除 / 修改命令后，只需要重跑一次 `qxw-completion install -y`**（脚本整体覆盖），shell 重载即可获得最新补全。
+所以**新增 / 删除 / 修改命令后，只需要重跑一次 `qxw completion install -y`**（脚本整体覆盖），shell 重载即可获得最新补全。
+
+> 注意：rc 中注入的 marker 为 `# >>> qxw-completion >>>`，为兼容旧安装保留原文本，不影响功能。
 
 ### 基本用法
 
 ```bash
 # 自动检测 $SHELL（zsh / bash），写入补全文件并在 rc 里追加 source 行
-qxw-completion install
+qxw completion install
 
 # 非交互：跳过 rc 修改前的确认提示
-qxw-completion install -y
+qxw completion install -y
 
 # 指定 shell（跨 shell 安装时有用）
-qxw-completion install --shell zsh
-qxw-completion install --shell bash -y
+qxw completion install --shell zsh
+qxw completion install --shell bash -y
 
 # 仅打印脚本到 stdout，不落盘
-qxw-completion show --shell zsh | head -40
-qxw-completion show --shell bash > /tmp/qxw.bash
+qxw completion show --shell zsh | head -40
+qxw completion show --shell bash > /tmp/qxw.bash
 
 # 查看当前安装状态
-qxw-completion status
+qxw completion status
 
 # 完全移除（删补全文件 + 从 rc 里剔除 source 块）
-qxw-completion uninstall
-qxw-completion uninstall -y
+qxw completion uninstall
+qxw completion uninstall -y
 ```
 
 ### 子命令概览
@@ -977,19 +1001,20 @@ qxw-completion uninstall -y
 
 ```bash
 # 1. 安装（自动识别 zsh / bash）
-qxw-completion install
+qxw completion install
 
 # 2. 让当前 shell 立即生效
 source ~/.zshrc          # zsh
 # 或 source ~/.bash_profile / ~/.bashrc，或直接 exec zsh / exec bash
 
 # 3. 验证：按 TAB 键应能补全子命令 / 选项
+qxw <TAB><TAB>           # list / hello / sbdqf / completion
 qxw-image <TAB><TAB>     # http / raw / svg / filter
 qxw-chat-provider <TAB>  # list / add / edit / delete / set-default / show / ping / ping-all
 qxw-markdown wx --<TAB>  # --format / --background / ...
 
 # 4. 以后新增 / 修改了 qxw 命令？再跑一遍 install 就好
-qxw-completion install -y
+qxw completion install -y
 ```
 
 ### RC 文件的选择
@@ -1014,12 +1039,12 @@ source "/Users/you/.config/qxw/completions/qxw.zsh"
 - **zsh + oh-my-zsh：补全没生效？**
   oh-my-zsh 自带的 `compinit` 会在它的初始化阶段跑。我们注入的 source 行如果**放在 oh-my-zsh 加载之前**，zsh 还没把 `compdef` 定义出来，所以补全注册失败。解决：把 `# >>> qxw-completion >>>` 块整体剪到 `source $ZSH/oh-my-zsh.sh` 之后，或在块前加一行 `autoload -Uz compinit && compinit`。
 - **bash：看到 "Shell completion is not supported for Bash versions older than 4.4" 警告？**
-  这是 Click 的检测逻辑——macOS 自带的 `/bin/bash` 是 3.2，`brew install bash` 升级到 5.x 即可。`qxw-completion` 已在脚本生成阶段把该警告吞掉，但你在目标 bash 里 `source` 时仍可能看到 Click 的 complete-mode 行为不完整。
+  这是 Click 的检测逻辑——macOS 自带的 `/bin/bash` 是 3.2，`brew install bash` 升级到 5.x 即可。`qxw completion` 已在脚本生成阶段把该警告吞掉，但你在目标 bash 里 `source` 时仍可能看到 Click 的 complete-mode 行为不完整。
 - **想改到别的 rc 文件？**
-  目前没暴露 `--rc-file`。临时方案：用 `qxw-completion show --shell <shell> > somewhere/qxw.<shell>` + 自己在目标 rc 里写一行 `source somewhere/qxw.<shell>`，完全绕开我们的 rc 管理。
+  目前没暴露 `--rc-file`。临时方案：用 `qxw completion show --shell <shell> > somewhere/qxw.<shell>` + 自己在目标 rc 里写一行 `source somewhere/qxw.<shell>`，完全绕开我们的 rc 管理。
 - **新增命令后补全里没看到？**
-  直接再跑一次 `qxw-completion install -y`，脚本文件整体覆盖；已注入的 rc 行无需再改。
-- **`qxw-completion status` 报告 "跳过命令"？**
+  直接再跑一次 `qxw completion install -y`，脚本文件整体覆盖；已注入的 rc 行无需再改。
+- **`qxw completion status` 报告 "跳过命令"？**
   说明某个 `qxw-*` 命令在 import 阶段抛了异常（多半是可选依赖缺失，比如没装 `weasyprint` 却想给 `qxw-gitbook` 生成补全）。补全脚本对其他命令仍然有效；跳过原因会直接打印出来供定位。
 
 ## qxw-str

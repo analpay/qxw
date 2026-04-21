@@ -498,7 +498,7 @@ verify_install() {
     local all_ok=true
 
     # 获取所有注册的命令
-    local commands=("qxw" "qxw-hello" "qxw-sbdqf" "qxw-chat" "qxw-chat-provider" "qxw-gitbook" "qxw-webtool")
+    local commands=("qxw" "qxw-chat" "qxw-chat-provider" "qxw-gitbook" "qxw-webtool" "qxw-str")
 
     for cmd in "${commands[@]}"; do
         if has_cmd "$cmd"; then
@@ -541,9 +541,10 @@ print_summary() {
     fi
     echo ""
     info "快速体验:"
-    info "  qxw              # 查看所有可用命令"
-    info "  qxw-hello        # 运行示例命令"
-    info "  qxw-hello --tui  # TUI 交互模式"
+    info "  qxw list           # 查看所有可用命令"
+    info "  qxw hello          # 运行示例命令"
+    info "  qxw hello --tui    # TUI 交互模式"
+    info "  qxw completion install  # 安装 Shell 补全"
     echo ""
 }
 

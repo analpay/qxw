@@ -2,7 +2,7 @@
 
 ## 安装相关
 
-### Q: 安装后执行 qxw-hello 提示 "command not found"
+### Q: 安装后执行 `qxw hello` 或其他命令提示 "command not found"
 
 确保已正确安装：
 

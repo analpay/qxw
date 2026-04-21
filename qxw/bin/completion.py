@@ -1,14 +1,16 @@
-"""qxw-completion 命令入口
+"""qxw completion 子命令入口
+
+作为 ``qxw`` 命令组的子命令使用（原 ``qxw-completion`` 独立命令已合并）。
 
 为所有已注册的 qxw* 命令一次性生成 Shell 补全脚本（zsh / bash），
 并可选择自动写入用户的 shell rc 文件。
 
 用法:
-    qxw-completion install               # 自动检测 $SHELL 并安装
-    qxw-completion install --shell zsh   # 指定 shell
-    qxw-completion uninstall             # 移除补全脚本和 rc 中注入的 source 行
-    qxw-completion show --shell bash     # 仅打印脚本到 stdout，不落盘
-    qxw-completion status                # 显示当前安装状态
+    qxw completion install               # 自动检测 $SHELL 并安装
+    qxw completion install --shell zsh   # 指定 shell
+    qxw completion uninstall             # 移除补全脚本和 rc 中注入的 source 行
+    qxw completion show --shell bash     # 仅打印脚本到 stdout，不落盘
+    qxw completion status                # 显示当前安装状态
 """
 
 import contextlib
@@ -152,7 +154,7 @@ def _build_script(
         header_lines.append(f"# 跳过命令 ({len(skipped)}):")
         for name, err in skipped:
             header_lines.append(f"#   - {name}: {err}")
-    header_lines.append("# 本文件由 `qxw-completion install` 生成，请勿手动编辑；重跑 install 即可刷新。")
+    header_lines.append("# 本文件由 `qxw completion install` 生成，请勿手动编辑；重跑 install 即可刷新。")
     header = "\n".join(header_lines) + "\n"
 
     sections: list[str] = []
@@ -259,14 +261,14 @@ def _print_post_install_hint(shell: str, rc: Path, rc_was_appended: bool) -> Non
 
 
 @click.group(
-    name="qxw-completion",
+    name="completion",
     help="为所有 qxw* 命令生成并安装 Shell 补全脚本 (zsh / bash)",
-    epilog="使用 qxw-completion <子命令> --help 查看各子命令的详细帮助。",
+    epilog="使用 qxw completion <子命令> --help 查看各子命令的详细帮助。",
     invoke_without_command=True,
 )
 @click.version_option(
     version=__version__,
-    prog_name="qxw-completion",
+    prog_name="qxw completion",
     message="%(prog)s 版本 %(version)s",
 )
 @click.pass_context
@@ -291,9 +293,9 @@ def show_command(shell: str) -> None:
 
     \b
     示例:
-        qxw-completion show
-        qxw-completion show --shell zsh
-        qxw-completion show --shell bash > qxw.bash
+        qxw completion show
+        qxw completion show --shell zsh
+        qxw completion show --shell bash > qxw.bash
     """
     try:
         resolved = _detect_shell(shell)
@@ -339,7 +341,7 @@ def install_command(shell: str, assume_yes: bool) -> None:
 
     \b
     典型流程:
-        qxw-completion install          # 自动检测
+        qxw completion install          # 自动检测
         source ~/.zshrc                 # 或 exec zsh
         qxw-image <TAB>                 # 子命令被 tab 补全
     """
@@ -487,7 +489,7 @@ def status_command(shell: str) -> None:
         target = _completion_file_path(resolved)
         rc = _rc_path(resolved)
 
-        table = Table(title=f"qxw-completion 状态 ({resolved})")
+        table = Table(title=f"qxw completion 状态 ({resolved})")
         table.add_column("项目", style="cyan")
         table.add_column("值")
         table.add_row("检测到的 Shell", resolved)

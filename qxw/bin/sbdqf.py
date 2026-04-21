@@ -1,11 +1,13 @@
-"""qxw-sbdqf 命令入口
+"""qxw sbdqf 子命令入口
 
 一只老鼠从终端屏幕上飞速穿过，类似于经典的 sl 命令效果。
 就像 sl 一样，Ctrl+C 无法中断——老鼠必须跑完全程！
 
+作为 ``qxw`` 命令组的子命令使用（原 ``qxw-sbdqf`` 独立命令已合并）：
+
 用法:
-    qxw-sbdqf          # 运行动画
-    qxw-sbdqf --help   # 查看帮助信息
+    qxw sbdqf          # 运行动画
+    qxw sbdqf --help   # 查看帮助信息
 """
 
 import curses
@@ -151,13 +153,13 @@ def _run_animation(stdscr: curses.window, rounds: int | None, duration: int | No
 
 
 @click.command(
-    name="qxw-sbdqf",
+    name="sbdqf",
     help="🐭 一只老鼠从终端屏幕上飞速穿过（致敬经典 sl 命令）",
     epilog="和 sl 一样，Ctrl+C 无法中断——老鼠必须跑完全程！",
 )
 @click.version_option(
     version=__version__,
-    prog_name="qxw-sbdqf",
+    prog_name="qxw sbdqf",
     message="%(prog)s 版本 %(version)s",
 )
 @click.option("-r", "--rounds", default=None, type=click.IntRange(min=1), help="老鼠跑过屏幕的轮次（不填则不限轮次）")
@@ -170,10 +172,10 @@ def main(rounds: int | None, duration: int | None) -> None:
 
     \b
     示例:
-        qxw-sbdqf              # 跑 1 轮
-        qxw-sbdqf -r 5         # 跑 5 轮
-        qxw-sbdqf -d 30        # 最多跑 30 秒
-        qxw-sbdqf -r 100 -d 10 # 跑 100 轮或 10 秒，先到先停
+        qxw sbdqf              # 跑 1 轮
+        qxw sbdqf -r 5         # 跑 5 轮
+        qxw sbdqf -d 30        # 最多跑 30 秒
+        qxw sbdqf -r 100 -d 10 # 跑 100 轮或 10 秒，先到先停
     """
     try:
         curses.wrapper(lambda stdscr: _run_animation(stdscr, rounds, duration))

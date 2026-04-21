@@ -1,12 +1,14 @@
-"""qxw-hello 命令入口
+"""qxw hello 子命令入口
 
 一个示例命令，展示 QXW 工具集的标准开发模式。
 使用 Click 处理命令行参数，使用 Textual 实现 TUI 界面。
 
+作为 ``qxw`` 命令组的子命令使用（原 ``qxw-hello`` 独立命令已合并）：
+
 用法:
-    qxw-hello          # 纯命令行模式输出（默认）
-    qxw-hello --tui    # 启动 TUI 界面
-    qxw-hello --help   # 查看帮助信息
+    qxw hello          # 纯命令行模式输出（默认）
+    qxw hello --tui    # 启动 TUI 界面
+    qxw hello --help   # 查看帮助信息
 """
 
 import sys
@@ -116,7 +118,7 @@ class HelloApp(App):
 
 
 @click.command(
-    name="qxw-hello",
+    name="hello",
     help="QXW 工具集示例命令 - Hello World",
     epilog="这是 QXW 命令行工具集合的示例命令，用于验证安装是否成功。",
 )
@@ -135,7 +137,7 @@ class HelloApp(App):
 )
 @click.version_option(
     version=__version__,
-    prog_name="qxw-hello",
+    prog_name="qxw hello",
     message="%(prog)s 版本 %(version)s",
 )
 def main(name: str, tui: bool) -> None:
@@ -145,16 +147,16 @@ def main(name: str, tui: bool) -> None:
 
     \b
     示例:
-        qxw-hello              # 默认命令行输出
-        qxw-hello --name 开发者  # 自定义问候名称
-        qxw-hello --tui        # TUI 交互模式
+        qxw hello              # 默认命令行输出
+        qxw hello --name 开发者  # 自定义问候名称
+        qxw hello --tui        # TUI 交互模式
     """
     try:
         # 检测并初始化运行环境
         _ensure_env()
 
         config = HelloConfig(name=name, tui_mode=tui)
-        logger.info("启动 qxw-hello 命令, name=%s, tui=%s", name, config.tui_mode)
+        logger.info("启动 qxw hello 子命令, name=%s, tui=%s", name, config.tui_mode)
 
         if config.tui_mode:
             app = HelloApp(config)

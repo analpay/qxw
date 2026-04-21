@@ -44,33 +44,47 @@ pip install -e ".[dev]"
 ### 验证安装
 
 ```bash
-# 查看帮助
-qxw-hello --help
+# 查看 qxw 主命令帮助（列出子命令）
+qxw --help
 
-# 运行示例命令（默认命令行模式）
-qxw-hello
+# 列出所有命令（子命令 + 独立命令）
+qxw list
+
+# 运行示例子命令
+qxw hello
 
 # TUI 交互模式
-qxw-hello --tui
+qxw hello --tui
 
 # 自定义问候
-qxw-hello --name 开发者
+qxw hello --name 开发者
 ```
 
 ## 命令列表
 
+`qxw` 是命令组主入口，内置若干子命令；其余独立命令以 `qxw-*` 形式分布。
+
+### qxw 命令组子命令
+
+| 子命令 | 说明 |
+|--------|------|
+| `qxw list` | 📋 列出所有可用命令 |
+| `qxw hello` | 示例命令，验证安装是否成功 |
+| `qxw sbdqf` | 🐭 老鼠穿越动画，致敬经典 sl 命令 |
+| `qxw completion` | 🔑 生成并安装 Shell 补全脚本（zsh / bash） |
+
+### qxw-* 独立命令
+
 | 命令 | 说明 |
 |------|------|
-| `qxw` | 📋 列出所有可用命令 |
-| `qxw-hello` | 示例命令，验证安装是否成功 |
-| `qxw-sbdqf` | 🐭 老鼠穿越动画，致敬经典 sl 命令 |
 | `qxw-chat` | 🤖 AI 对话工具，支持 OpenAI / Anthropic 提供商 |
 | `qxw-chat-provider` | ⚙️ AI 对话提供商管理（增删改查） |
 | `qxw-gitbook` | 📖 Markdown 文档工具（PDF 转换 / 本地预览） |
 | `qxw-webtool` | 🧰 开发者 Web 工具集（文本对比 / JSON / 时间戳 / 加解密 / 编解码） |
 | `qxw-file-server` | 📂 文件服务器（HTTP / FTP 文件共享，支持鉴权） |
 | `qxw-image` | 📷 图片工具集（HTTP 图片浏览 / RAW 批量转 JPG） |
-| `qxw-completion` | 🔑 生成并安装 Shell 补全脚本（zsh / bash） |
+| `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成） |
+| `qxw-str` | 🔤 字符串工具集（长度统计等） |
 
 ## 项目结构
 

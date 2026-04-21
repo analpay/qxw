@@ -65,13 +65,13 @@ pip install -e .
 
 ```bash
 # 运行示例命令（默认命令行模式）
-qxw-hello
+qxw hello
 
 # 或使用 TUI 交互模式
-qxw-hello --tui
+qxw hello --tui
 
 # 看一只老鼠跑过屏幕（致敬 sl 命令）
-qxw-sbdqf
+qxw sbdqf
 ```
 
 首次运行时会自动初始化运行环境（创建配置目录、配置文件、日志目录和数据库），输出类似：
@@ -90,14 +90,18 @@ qxw-sbdqf
 ## 4. 查看所有命令
 
 ```bash
-# 列出所有可用命令
-qxw
+# 列出所有可用命令（子命令 + 独立命令）
+qxw list
+
+# 查看 qxw 命令组的子命令
+qxw --help
 ```
 
 每个命令都支持 `--help` 参数：
 
 ```bash
-qxw-hello --help
+qxw hello --help
+qxw-image --help
 ```
 
 ## 5. AI 对话快速体验
@@ -226,25 +230,26 @@ qxw-markdown cover docs/article.md -o out/cover.png --extra-prompt "突出网络
 
 ## 12. Shell 自动补全
 
-为所有 `qxw*` 命令一次性开启 zsh / bash 的子命令与选项 tab 补全：
+为所有 `qxw` / `qxw-*` 命令一次性开启 zsh / bash 的子命令与选项 tab 补全：
 
 ```bash
 # 自动检测 $SHELL，生成补全脚本并在 rc 末尾追加 source 行（改 rc 前有确认提示）
-qxw-completion install
+qxw completion install
 
 # 让当前 shell 立即生效
 source ~/.zshrc                # zsh
 # 或 exec zsh / exec bash
 
 # 验证
+qxw <TAB>                      # 应补出 list / hello / sbdqf / completion
 qxw-image <TAB>                # 应补出 http / raw / svg / filter
 qxw-chat --<TAB>               # 应补出全部选项
 
 # 随时查看状态
-qxw-completion status
+qxw completion status
 ```
 
-新增或修改命令后，再跑一次 `qxw-completion install -y` 即可刷新（脚本整体覆盖，无需卸载）。详见 [使用手册 · qxw-completion](user-guide.md#qxw-completion)。
+新增或修改命令后，再跑一次 `qxw completion install -y` 即可刷新（脚本整体覆盖，无需卸载）。详见 [使用手册 · qxw completion](user-guide.md#qxw-completion)。
 
 ## 13. 字符串工具
 
