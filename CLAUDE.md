@@ -54,3 +54,9 @@ qxw/
 - 使用 ruff 进行代码格式化和 lint
 - 行宽限制 120 字符
 - 使用 type hints
+
+### 调试环境规范
+
+- 调试命令必须在项目根目录下的 `.venv` 虚拟环境中运行
+- 使用 Python 3.12 创建虚拟环境：`python3.12 -m venv .venv`
+- 运行任何调试命令前必须先激活虚拟环境：`source .venv/bin/activate`
