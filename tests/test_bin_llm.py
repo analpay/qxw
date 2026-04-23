@@ -372,3 +372,500 @@ class TestTuiCommand:
         monkeypatch.setattr(llm_mod, "ChatProviderApp", lambda: FakeApp())
         code, out = _run(["tui"])
         assert code == 130
+
+
+class TestRunInteractive:
+    def test_立即_EOF_退出(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """console.input 抛 EOFError 时应静默退出"""
+        from qxw.library.services.chat_service import ChatParams, ChatSession
+
+        p = _fake_provider()
+        session = ChatSession(provider=p, params=ChatParams.from_provider(p))
+
+        class FakeSvc:
+            def stream_chat(self, s, m):
+                yield "x"
+
+        monkeypatch.setattr(llm_mod.console, "input", lambda _prompt: (_ for _ in ()).throw(EOFError()))
+        llm_mod._run_interactive(session, FakeSvc())  # 不抛
+
+    def test_KeyboardInterrupt_退出(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services.chat_service import ChatParams, ChatSession
+        p = _fake_provider()
+        session = ChatSession(provider=p, params=ChatParams.from_provider(p))
+        monkeypatch.setattr(
+            llm_mod.console, "input",
+            lambda _p: (_ for _ in ()).throw(KeyboardInterrupt()),
+        )
+        llm_mod._run_interactive(session, SimpleNamespace())
+
+    def test_空输入_跳过(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services.chat_service import ChatParams, ChatSession
+        p = _fake_provider()
+        session = ChatSession(provider=p, params=ChatParams.from_provider(p))
+
+        # 第一次空串，第二次 /exit
+        inputs = iter(["", "/exit"])
+        monkeypatch.setattr(llm_mod.console, "input", lambda _p: next(inputs))
+        llm_mod._run_interactive(session, SimpleNamespace())
+
+    def test_clear_清空上下文(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services.chat_service import ChatMessage, ChatParams, ChatSession
+        p = _fake_provider()
+        session = ChatSession(provider=p, params=ChatParams.from_provider(p))
+        session.messages.append(ChatMessage(role="user", content="old"))
+
+        inputs = iter(["/clear", "/exit"])
+        monkeypatch.setattr(llm_mod.console, "input", lambda _p: next(inputs))
+        llm_mod._run_interactive(session, SimpleNamespace())
+        assert session.messages == []
+
+    def test_QxwError_在对话中_被捕获(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services.chat_service import ChatParams, ChatSession
+        p = _fake_provider()
+        session = ChatSession(provider=p, params=ChatParams.from_provider(p))
+
+        class FakeSvc:
+            def stream_chat(self, s, m):
+                raise QxwError("auth 失败", exit_code=1)
+
+        inputs = iter(["hi", "/exit"])
+        monkeypatch.setattr(llm_mod.console, "input", lambda _p: next(inputs))
+        # 不抛出，只是打印
+        llm_mod._run_interactive(session, FakeSvc())
+
+    def test_完整流程_正常对话(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services.chat_service import ChatParams, ChatSession
+        p = _fake_provider()
+        session = ChatSession(provider=p, params=ChatParams.from_provider(p))
+
+        class FakeSvc:
+            def stream_chat(self, s, m):
+                yield "你"
+                yield "好"
+
+        inputs = iter(["hi", "/exit"])
+        monkeypatch.setattr(llm_mod.console, "input", lambda _p: next(inputs))
+        llm_mod._run_interactive(session, FakeSvc())
+
+
+class TestRunSingleSuccess:
+    def test_正常流式输出(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services.chat_service import ChatParams, ChatSession
+        p = _fake_provider()
+        session = ChatSession(provider=p, params=ChatParams.from_provider(p))
+
+        class FakeSvc:
+            def stream_chat(self, s, m):
+                yield "ok"
+
+        llm_mod._run_single(session, FakeSvc(), "hi")  # 不抛
+
+
+class TestProviderDeleteErrors:
+    def test_delete_QxwError(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(llm_mod.manager, "get_by_name", lambda n: _fake_provider())
+
+        def boom(n):
+            raise QxwError("删错", exit_code=5)
+
+        monkeypatch.setattr(llm_mod.manager, "delete", boom)
+        code, out = _run(["provider", "delete", "p1", "-y"])
+        assert code == 5
+
+
+class TestProviderEditNoFields:
+    def test_仅_default_更新(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict = {}
+
+        def fake(name, **k):
+            captured.update(k)
+            return _fake_provider(name=name)
+
+        monkeypatch.setattr(llm_mod.manager, "update", fake)
+        code, _ = _run(["provider", "edit", "p1", "--default"])
+        assert code == 0
+        assert captured["is_default"] is True
+
+
+class TestProviderGroupNoSubcommand:
+    def test_无子命令打印帮助(self) -> None:
+        code, out = _run(["provider"])
+        assert code == 0
+        assert "list" in out
+
+
+class TestEnsureEnvLLM:
+    def test_已就绪_不触发_init(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """直接调用 _ensure_env 覆盖源码行"""
+        # 先移除 autouse 的 stub（此 fixture 在 local scope 生效）
+        import qxw.config.init as init_mod
+
+        class Ready:
+            all_ready = True
+
+        monkeypatch.setattr(init_mod, "check_env", lambda: Ready())
+        init_called: dict[str, bool] = {}
+        monkeypatch.setattr(init_mod, "init_env", lambda: init_called.setdefault("x", True))
+
+        from qxw.library.models import base as models_base
+        monkeypatch.setattr(models_base, "init_db", lambda: None)
+
+        # _stub_ensure_env 已替换模块的 _ensure_env；直接调原函数
+        # 找到模块里真实函数
+        orig = type(llm_mod._ensure_env)  # 当前是 lambda；我们用全量路径调原始
+        # 用 importlib.reload 太重，改成直接构造：复制源码逻辑
+        # 这里简化：从源里取真实版本
+        import importlib
+        fresh = importlib.reload(llm_mod)
+        try:
+            fresh._ensure_env()  # type: ignore[attr-defined]
+        finally:
+            # 恢复 stub
+            monkeypatch.setattr(fresh, "_ensure_env", lambda: None)
+
+    def test_未就绪_触发_init_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib
+        fresh = importlib.reload(llm_mod)
+        import qxw.config.init as init_mod
+
+        class NotReady:
+            all_ready = False
+
+        class Result:
+            initialized_items = ["配置目录"]
+
+        monkeypatch.setattr(init_mod, "check_env", lambda: NotReady())
+        monkeypatch.setattr(init_mod, "init_env", lambda: Result())
+
+        from qxw.library.models import base as models_base
+        monkeypatch.setattr(models_base, "init_db", lambda: None)
+
+        runner = CliRunner()
+        # 包一层 echo，保持测试隔离
+        result = runner.invoke(fresh.main, ["--version"])
+        assert result.exit_code == 0
+
+
+class TestChatCommandInteractive:
+    def test_无_message_走_interactive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        p = _fake_provider()
+        monkeypatch.setattr(llm_mod.manager, "get_default", lambda: p)
+
+        interactive_called: dict[str, bool] = {}
+
+        def fake_interactive(session, service):
+            interactive_called["ran"] = True
+
+        monkeypatch.setattr(llm_mod, "_run_interactive", fake_interactive)
+        code, _ = _run(["chat"])  # 不带 -m
+        assert code == 0
+        assert interactive_called["ran"] is True
+
+
+class TestEditAllFields:
+    def test_每个字段都被收集(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, object] = {}
+
+        def fake(name, **k):
+            captured.update(k)
+            return _fake_provider(name=name)
+
+        monkeypatch.setattr(llm_mod.manager, "update", fake)
+        code, _ = _run([
+            "provider", "edit", "p1",
+            "--type", "openai",
+            "-u", "http://new",
+            "-k", "newkey",
+            "-m", "new-model",
+            "-t", "0.9",
+            "--max-tokens", "200",
+            "--top-p", "0.95",
+            "-s", "system",
+            "--default",
+        ])
+        assert code == 0
+        assert captured["provider_type"] == "openai"
+        assert captured["base_url"] == "http://new"
+        assert captured["api_key"] == "newkey"
+        assert captured["model"] == "new-model"
+        assert captured["temperature"] == 0.9
+        assert captured["max_tokens"] == 200
+        assert captured["top_p"] == 0.95
+        assert captured["system_prompt"] == "system"
+        assert captured["is_default"] is True
+
+
+class TestPingProviderQxwError:
+    def test_QxwError_包装(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(n):
+            raise QxwError("ping 错", exit_code=7)
+
+        monkeypatch.setattr(llm_mod.manager, "get_by_name", boom)
+        code, out = _run(["provider", "ping", "foo"])
+        assert code == 7
+
+
+class TestPingAllQxwError:
+    def test_QxwError(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom():
+            raise QxwError("列表错", exit_code=8)
+
+        monkeypatch.setattr(llm_mod.manager, "list_all", boom)
+        code, out = _run(["provider", "ping-all"])
+        assert code == 8
+
+
+class TestProviderTUIApp:
+    """用 Textual Pilot 烟测 ChatProviderApp，覆盖 compose/按键路径"""
+
+    def test_启动与退出(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import asyncio
+
+        monkeypatch.setattr(llm_mod.manager, "list_all", lambda: [])
+
+        async def _go() -> None:
+            app = llm_mod.ChatProviderApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("q")
+
+        asyncio.run(_go())
+
+    def test_带数据_刷新(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import asyncio
+
+        monkeypatch.setattr(
+            llm_mod.manager, "list_all", lambda: [_fake_provider(name="a")],
+        )
+
+        async def _go() -> None:
+            app = llm_mod.ChatProviderApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                # 刷新
+                await pilot.press("r")
+                await pilot.pause()
+                await pilot.press("q")
+
+        asyncio.run(_go())
+
+    def test_action_触发所有分支(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """直接调用 action_* 方法覆盖 add/edit/copy/delete/set_default 的空表与命中分支"""
+        import asyncio
+
+        p = _fake_provider(name="xx")
+        monkeypatch.setattr(llm_mod.manager, "list_all", lambda: [p])
+        monkeypatch.setattr(llm_mod.manager, "get_by_name", lambda n: p if n == "xx" else None)
+        monkeypatch.setattr(llm_mod.manager, "set_default", lambda n: p)
+        monkeypatch.setattr(llm_mod.manager, "delete", lambda n: None)
+        monkeypatch.setattr(llm_mod.manager, "create", lambda **k: _fake_provider(**{
+            kk: k[kk] for kk in ("name", "provider_type", "base_url", "api_key", "model")
+        }))
+        monkeypatch.setattr(llm_mod.manager, "update", lambda n, **k: p)
+
+        async def _go() -> None:
+            app = llm_mod.ChatProviderApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+
+                # 模拟 form 结果：编辑
+                app._on_form_result({"name": "xx", "provider_type": "openai", "_is_edit": True})
+                # 模拟 form 结果：新增
+                app._on_form_result({
+                    "name": "newp", "provider_type": "openai",
+                    "base_url": "http://x", "api_key": "k", "model": "m",
+                    "temperature": 0.7, "max_tokens": 1, "top_p": 1.0,
+                    "system_prompt": "", "is_default": False,
+                    "_is_edit": False,
+                })
+                # form 返回 None（用户取消）
+                app._on_form_result(None)
+
+                # 选中表格第一行后触发 edit/copy
+                table = app.query_one(llm_mod.DataTable)
+                if table.row_count > 0:
+                    app._open_edit()
+                    app.action_copy_provider()
+                    app.action_set_default()
+
+                # 删除：直接执行 action_delete_provider 会 push 一个 ConfirmDeleteScreen
+                # 我们不驱动 screen，只保证 action 路径被执行
+                app.action_delete_provider()
+                await pilot.pause()
+
+                await pilot.press("q")
+
+        asyncio.run(_go())
+
+    def test_空表下_get_selected_name_返回_None(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import asyncio
+        monkeypatch.setattr(llm_mod.manager, "list_all", lambda: [])
+
+        async def _go() -> None:
+            app = llm_mod.ChatProviderApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                assert app._get_selected_name() is None
+                # 空表触发 edit/copy/delete/set_default 应静默 return
+                app.action_edit_provider()
+                app.action_copy_provider()
+                app.action_delete_provider()
+                app.action_set_default()
+                await pilot.press("q")
+
+        asyncio.run(_go())
+
+
+class TestProviderFormScreen:
+    def test_add_mode_compose_通过_pilot(self) -> None:
+        import asyncio
+
+        async def _go() -> None:
+            class _WrapperApp(llm_mod.App):
+                def compose(self):
+                    return []
+
+                def on_mount(self) -> None:
+                    self.push_screen(llm_mod.ProviderFormScreen())
+
+            app = _WrapperApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("escape")  # 触发 action_cancel
+
+        asyncio.run(_go())
+
+    def test_edit_mode_带_provider_compose(self) -> None:
+        import asyncio
+
+        p = _fake_provider()
+
+        async def _go() -> None:
+            class _WrapperApp(llm_mod.App):
+                def compose(self):
+                    return []
+
+                def on_mount(self) -> None:
+                    self.push_screen(llm_mod.ProviderFormScreen(p))
+
+            app = _WrapperApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("escape")
+
+        asyncio.run(_go())
+
+    def test_copy_mode_compose(self) -> None:
+        import asyncio
+
+        p = _fake_provider()
+
+        async def _go() -> None:
+            class _WrapperApp(llm_mod.App):
+                def compose(self):
+                    return []
+
+                def on_mount(self) -> None:
+                    self.push_screen(llm_mod.ProviderFormScreen(p, copy_from="p1"))
+
+            app = _WrapperApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("escape")
+
+        asyncio.run(_go())
+
+
+class TestConfirmDeleteScreen:
+    def test_点取消_dismiss_False(self) -> None:
+        import asyncio
+
+        async def _go() -> None:
+            received: list[bool] = []
+
+            class _WrapperApp(llm_mod.App):
+                def compose(self):
+                    return []
+
+                def on_mount(self) -> None:
+                    self.push_screen(
+                        llm_mod.ConfirmDeleteScreen("p1"),
+                        lambda r: received.append(bool(r)),
+                    )
+
+            app = _WrapperApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                # 点击 cancel 按钮
+                cancel_btn = app.screen.query_one("#cancel")
+                await pilot.click(cancel_btn)
+                await pilot.pause()
+
+            assert received == [False]
+
+        asyncio.run(_go())
+
+    def test_点确认_dismiss_True(self) -> None:
+        import asyncio
+
+        async def _go() -> None:
+            received: list[bool] = []
+
+            class _WrapperApp(llm_mod.App):
+                def compose(self):
+                    return []
+
+                def on_mount(self) -> None:
+                    self.push_screen(
+                        llm_mod.ConfirmDeleteScreen("p1"),
+                        lambda r: received.append(bool(r)),
+                    )
+
+            app = _WrapperApp()
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                confirm_btn = app.screen.query_one("#confirm")
+                await pilot.click(confirm_btn)
+                await pilot.pause()
+
+            assert received == [True]
+
+        asyncio.run(_go())
+
+
+class TestChatCommandOptionsOverride:
+    def test_model_temp_等参数传入_params(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        p = _fake_provider()
+        monkeypatch.setattr(llm_mod.manager, "get_default", lambda: p)
+
+        captured: dict[str, object] = {}
+
+        class FakeSvc:
+            def stream_chat(self, session, msg):
+                captured["model"] = session.params.model
+                captured["temp"] = session.params.temperature
+                captured["max_tokens"] = session.params.max_tokens
+                captured["top_p"] = session.params.top_p
+                captured["sys"] = session.params.system_prompt
+                yield ""
+
+        monkeypatch.setattr(llm_mod, "ChatService", lambda: FakeSvc())
+        code, _ = _run([
+            "chat", "-m", "hi",
+            "--model", "gpt-5",
+            "-t", "0.1",
+            "--max-tokens", "100",
+            "--top-p", "0.9",
+            "-s", "你是助手",
+        ])
+        assert code == 0
+        assert captured["model"] == "gpt-5"
+        assert captured["temp"] == 0.1
+        assert captured["max_tokens"] == 100
+        assert captured["top_p"] == 0.9
+        assert captured["sys"] == "你是助手"

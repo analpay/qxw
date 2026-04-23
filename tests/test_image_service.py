@@ -357,3 +357,243 @@ class TestConvertRaw:
         monkeypatch.setattr(builtins, "__import__", fake_import)
         with pytest.raises(ImportError):
             isvc.convert_raw(tmp_path / "x.cr3", tmp_path / "x.jpg")
+
+    def test_嵌入预览_JPEG_足够大_直接写入(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """优先走 extract_thumb 分支"""
+        # 构造假 rawpy
+        class ThumbFmt:
+            JPEG = "jpeg"
+
+        class Thumb:
+            format = ThumbFmt.JPEG
+            data = b"FAKE_JPEG_BYTES"
+
+        class FakeRaw:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def extract_thumb(self):
+                return Thumb()
+
+            def postprocess(self, **k):
+                return None  # 不应走到
+
+        class ColorSpace:
+            sRGB = 1
+
+        class DemosaicAlgorithm:
+            LINEAR = 0
+
+        class LibRawNoThumbnailError(Exception):
+            pass
+
+        class LibRawUnsupportedThumbnailError(Exception):
+            pass
+
+        import sys as _sys, types as _types
+
+        rawpy_mod = _types.ModuleType("rawpy")
+        rawpy_mod.imread = lambda p: FakeRaw()  # type: ignore[attr-defined]
+        rawpy_mod.ThumbFormat = ThumbFmt  # type: ignore[attr-defined]
+        rawpy_mod.ColorSpace = ColorSpace  # type: ignore[attr-defined]
+        rawpy_mod.DemosaicAlgorithm = DemosaicAlgorithm  # type: ignore[attr-defined]
+        rawpy_mod.LibRawNoThumbnailError = LibRawNoThumbnailError  # type: ignore[attr-defined]
+        rawpy_mod.LibRawUnsupportedThumbnailError = LibRawUnsupportedThumbnailError  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "rawpy", rawpy_mod)
+
+        # 构造假 PIL.Image.open 返回大尺寸图
+        class FakeImg:
+            size = (2000, 1500)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        pil_mod = _types.ModuleType("PIL")
+        class FakeImageCls:
+            @staticmethod
+            def open(buf):
+                return FakeImg()
+
+            @staticmethod
+            def fromarray(x):
+                raise AssertionError("不应走到 rawpy 解码路径")
+
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "PIL", pil_mod)
+
+        dst = tmp_path / "out" / "x.jpg"
+        isvc.convert_raw(tmp_path / "x.cr3", dst, use_embedded=True)
+        assert dst.read_bytes() == b"FAKE_JPEG_BYTES"
+
+    def test_嵌入预览_抛_NoThumbnailError_回退_rawpy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys as _sys, types as _types
+
+        class LibRawNoThumbnailError(Exception):
+            pass
+
+        class LibRawUnsupportedThumbnailError(Exception):
+            pass
+
+        class ColorSpace:
+            sRGB = 1
+
+        class DemosaicAlgorithm:
+            LINEAR = 0
+
+        class ThumbFmt:
+            JPEG = "jpeg"
+
+        class FakeRaw:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def extract_thumb(self):
+                raise LibRawNoThumbnailError("no thumb")
+
+            def postprocess(self, **k):
+                import numpy as np
+                return np.zeros((10, 10, 3), dtype="uint8")
+
+        rawpy_mod = _types.ModuleType("rawpy")
+        rawpy_mod.imread = lambda p: FakeRaw()  # type: ignore[attr-defined]
+        rawpy_mod.ThumbFormat = ThumbFmt  # type: ignore[attr-defined]
+        rawpy_mod.ColorSpace = ColorSpace  # type: ignore[attr-defined]
+        rawpy_mod.DemosaicAlgorithm = DemosaicAlgorithm  # type: ignore[attr-defined]
+        rawpy_mod.LibRawNoThumbnailError = LibRawNoThumbnailError  # type: ignore[attr-defined]
+        rawpy_mod.LibRawUnsupportedThumbnailError = LibRawUnsupportedThumbnailError  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "rawpy", rawpy_mod)
+
+        saved: dict[str, str] = {}
+
+        class FakeArrImg:
+            def save(self, path, fmt, quality, progressive):
+                saved["path"] = str(path)
+                Path(path).write_bytes(b"JPG")
+
+        pil_mod = _types.ModuleType("PIL")
+        class FakeImageCls:
+            @staticmethod
+            def fromarray(arr):
+                return FakeArrImg()
+
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "PIL", pil_mod)
+
+        dst = tmp_path / "o" / "x.jpg"
+        isvc.convert_raw(tmp_path / "x.cr3", dst, use_embedded=True)
+        assert dst.read_bytes() == b"JPG"
+
+
+class TestOpenHelpersSuccess:
+    def test_open_raw_正常(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys as _sys, types as _types
+        import numpy as np
+
+        class ColorSpace:
+            sRGB = 1
+
+        class FakeRaw:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def postprocess(self, **k):
+                return np.zeros((4, 4, 3), dtype="uint8")
+
+        rawpy_mod = _types.ModuleType("rawpy")
+        rawpy_mod.imread = lambda p: FakeRaw()  # type: ignore[attr-defined]
+        rawpy_mod.ColorSpace = ColorSpace  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "rawpy", rawpy_mod)
+
+        class FakeImg:
+            pass
+
+        pil_mod = _types.ModuleType("PIL")
+        class FakeImageCls:
+            @staticmethod
+            def fromarray(arr):
+                return FakeImg()
+
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "PIL", pil_mod)
+
+        out = isvc._open_raw_as_pil(tmp_path / "x.cr3")
+        assert isinstance(out, FakeImg)
+
+    def test_open_raw_rawpy_抛错_返回_None(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys as _sys, types as _types
+
+        class ColorSpace:
+            sRGB = 1
+
+        rawpy_mod = _types.ModuleType("rawpy")
+        def raise_imread(p):
+            raise RuntimeError("file corrupt")
+        rawpy_mod.imread = raise_imread  # type: ignore[attr-defined]
+        rawpy_mod.ColorSpace = ColorSpace  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "rawpy", rawpy_mod)
+
+        pil_mod = _types.ModuleType("PIL")
+        pil_mod.Image = type("I", (), {})  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "PIL", pil_mod)
+
+        assert isvc._open_raw_as_pil(tmp_path / "x.cr3") is None
+
+    def test_open_heic_正常(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sys as _sys, types as _types
+
+        class FakeImg:
+            pass
+
+        pil_mod = _types.ModuleType("PIL")
+        class FakeImageCls:
+            @staticmethod
+            def open(p):
+                return FakeImg()
+
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "PIL", pil_mod)
+
+        heif_mod = _types.ModuleType("pillow_heif")
+        heif_mod.register_heif_opener = lambda: None  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "pillow_heif", heif_mod)
+
+        out = isvc._open_heic_as_pil(tmp_path / "x.heic")
+        assert isinstance(out, FakeImg)
+
+    def test_open_heic_打开失败返回_None(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys as _sys, types as _types
+
+        pil_mod = _types.ModuleType("PIL")
+        class FakeImageCls:
+            @staticmethod
+            def open(p):
+                raise RuntimeError("bad heic")
+
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "PIL", pil_mod)
+
+        heif_mod = _types.ModuleType("pillow_heif")
+        heif_mod.register_heif_opener = lambda: None  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "pillow_heif", heif_mod)
+
+        assert isvc._open_heic_as_pil(tmp_path / "x.heic") is None

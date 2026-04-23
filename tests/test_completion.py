@@ -382,3 +382,182 @@ class TestGenerateSource:
         monkeypatch.setattr(comp, "get_completion_class", lambda _s: None)
         with pytest.raises(QxwError, match="补全支持"):
             comp._generate_source_for("zsh", "qxw-foo", object())
+
+    def test_正常返回_补全源码(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class FakeInst:
+            def __init__(self, **kwargs) -> None:
+                self.kwargs = kwargs
+
+            def source(self) -> str:
+                return "# generated completion source"
+
+        class FakeCls:
+            def __call__(self, **kwargs):
+                return FakeInst(**kwargs)
+
+        monkeypatch.setattr(comp, "get_completion_class", lambda _s: FakeCls())
+        out = comp._generate_source_for("zsh", "qxw-foo", object())
+        assert "generated completion" in out
+
+
+class TestBuildScript:
+    def test_空_loaded_返回头部(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(comp, "_generate_source_for", lambda *a: "SRC")
+        out = comp._build_script("zsh", [], [])
+        assert "收录命令 (0)" in out
+        assert "(空)" in out
+
+    def test_带_loaded_串接所有源码(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(comp, "_generate_source_for", lambda shell, cmd, obj: f"SRC_{cmd}")
+        out = comp._build_script("zsh", [("qxw-a", object()), ("qxw-b", object())], [])
+        assert "SRC_qxw-a" in out and "SRC_qxw-b" in out
+        assert "---- qxw-a ----" in out
+
+    def test_单个命令生成失败_WARN_但不中断(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def flaky(shell, cmd, obj):
+            if cmd == "qxw-bad":
+                raise RuntimeError("nope")
+            return "OK"
+
+        monkeypatch.setattr(comp, "_generate_source_for", flaky)
+        out = comp._build_script("zsh", [("qxw-good", 1), ("qxw-bad", 2)], [])
+        assert "OK" in out
+        assert "[WARN]" in out
+
+    def test_skipped_出现在头部(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(comp, "_generate_source_for", lambda *a: "SRC")
+        out = comp._build_script("zsh", [], [("qxw-bad", "ImportError: x")])
+        assert "跳过命令" in out
+        assert "qxw-bad" in out
+
+
+class TestPrintPostInstallHint:
+    def test_zsh_分支(self, capsys) -> None:
+        comp._print_post_install_hint("zsh", Path("/tmp/.zshrc"), rc_was_appended=True)
+        out = capsys.readouterr().out
+        assert "exec zsh" in out
+        assert "追加" in out
+
+    def test_bash_分支(self, capsys) -> None:
+        comp._print_post_install_hint("bash", Path("/tmp/.bashrc"), rc_was_appended=False)
+        out = capsys.readouterr().out
+        assert "exec bash" in out
+        assert "重复" in out  # 未重复追加提示
+
+
+class TestShowNormalPath:
+    def test_show_输出完整脚本(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setattr(comp, "_iter_qxw_commands", lambda: ([("qxw-foo", object())], []))
+        monkeypatch.setattr(comp, "_build_script", lambda *a, **k: "# BIG SCRIPT\nfoo\n")
+        code, out = _run(["show", "--shell", "zsh"])
+        assert code == 0
+        assert "BIG SCRIPT" in out
+
+
+class TestInstallNormalPath:
+    def test_install_写入脚本与_rc(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", tmp_path / "completions")
+        monkeypatch.setattr(comp, "_iter_qxw_commands", lambda: ([("qxw-foo", object())], []))
+        monkeypatch.setattr(comp, "_build_script", lambda *a, **k: "# SCRIPT\n")
+        code, out = _run(["install", "--shell", "zsh", "-y"])
+        assert code == 0
+        assert (tmp_path / "completions" / "qxw.zsh").read_text(encoding="utf-8") == "# SCRIPT\n"
+        # rc 应被追加
+        rc = tmp_path / ".zshrc"
+        assert rc.exists()
+        assert comp.MARKER_BEGIN in rc.read_text()
+
+    def test_install_带_skipped_命令_输出提示(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", tmp_path / "completions")
+        monkeypatch.setattr(
+            comp, "_iter_qxw_commands",
+            lambda: ([("qxw-foo", object())], [("qxw-bad", "ImportError: x")]),
+        )
+        monkeypatch.setattr(comp, "_build_script", lambda *a, **k: "# SCRIPT\n")
+        code, out = _run(["install", "--shell", "zsh", "-y"])
+        assert code == 0
+        assert "qxw-bad" in out
+
+    def test_install_rc_已存在_marker_不重复追加(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", tmp_path / "completions")
+        monkeypatch.setattr(comp, "_iter_qxw_commands", lambda: ([("qxw-foo", object())], []))
+        monkeypatch.setattr(comp, "_build_script", lambda *a, **k: "# SCRIPT\n")
+        rc = tmp_path / ".zshrc"
+        rc.write_text(f"{comp.MARKER_BEGIN}\nsource x\n{comp.MARKER_END}\n")
+        code, out = _run(["install", "--shell", "zsh", "-y"])
+        assert code == 0
+        assert "未重复追加" in out or "已包含" in out
+
+    def test_install_用户拒绝追加(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", tmp_path / "completions")
+        monkeypatch.setattr(comp, "_iter_qxw_commands", lambda: ([("qxw-foo", object())], []))
+        monkeypatch.setattr(comp, "_build_script", lambda *a, **k: "# SCRIPT\n")
+        runner = CliRunner()
+        result = runner.invoke(comp.main, ["install", "--shell", "zsh"], input="n\n")
+        assert result.exit_code == 0
+        assert "已跳过" in result.output
+
+
+class TestUninstallNormalPath:
+    def test_uninstall_删除文件与_rc_段(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        comp_dir = tmp_path / "completions"
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", comp_dir)
+        comp_dir.mkdir()
+        (comp_dir / "qxw.zsh").write_text("# old\n")
+        rc = tmp_path / ".zshrc"
+        rc.write_text(f"alias x=y\n\n{comp.MARKER_BEGIN}\nsource z\n{comp.MARKER_END}\n")
+
+        code, out = _run(["uninstall", "--shell", "zsh", "-y"])
+        assert code == 0
+        assert not (comp_dir / "qxw.zsh").exists()
+        assert comp.MARKER_BEGIN not in rc.read_text()
+
+    def test_uninstall_取消(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        runner = CliRunner()
+        result = runner.invoke(comp.main, ["uninstall", "--shell", "zsh"], input="n\n")
+        assert result.exit_code == 0
+        assert "已取消" in result.output
+
+
+class TestStatusNormalPath:
+    def test_status_表格输出(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", tmp_path / "completions")
+        monkeypatch.setattr(
+            comp, "_iter_qxw_commands",
+            lambda: ([("qxw-foo", object())], [("qxw-bad", "x")]),
+        )
+        code, out = _run(["status", "--shell", "zsh"])
+        assert code == 0
+        assert "qxw-foo" in out
+        assert "qxw-bad" in out

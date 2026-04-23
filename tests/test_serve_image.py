@@ -168,3 +168,73 @@ class TestServeFileError:
 
         h._serve_file(BadPath(), "image/jpeg")  # type: ignore[arg-type]
         assert 500 in h._codes
+
+
+class TestGalleryStats:
+    def test_带_Live_与_RAW_统计(self, tmp_path: Path) -> None:
+        (tmp_path / "a.heic").write_bytes(b"x")
+        (tmp_path / "a.mov").write_bytes(b"x")
+        (tmp_path / "b.cr3").write_bytes(b"x")
+        img_live = ImageEntry(
+            path=tmp_path / "a.heic", rel_path="a.heic", name="a.heic", size=1,
+            live_video_path=tmp_path / "a.mov", live_video_rel="a.mov",
+        )
+        img_raw = ImageEntry(
+            path=tmp_path / "b.cr3", rel_path="b.cr3", name="b.cr3", size=1, is_raw=True,
+        )
+        cfg = ImageServerConfig(directory=tmp_path, port=0)
+        h = _H(cfg, [img_live, img_raw])
+        h.path = "/"
+        h.do_GET()
+        body = h.wfile.getvalue().decode("utf-8")
+        assert "LIVE" in body
+        assert "RAW" in body
+        assert "1 张 Live Photo" in body
+        assert "1 张 RAW" in body
+
+
+class TestLogMessage:
+    def test_log_不抛错(self, tmp_path: Path) -> None:
+        cfg = ImageServerConfig(directory=tmp_path, port=0)
+        h = _H(cfg, [])
+        h.log_message("%s", "ok")
+
+
+class TestServeThumbnailSuccess:
+    def test_正常返回_缩略图(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+
+        import qxw.library.services.image_service as isvc_mod
+
+        def fake_gen(src, thumb_path, size, quality):
+            thumb_path.parent.mkdir(parents=True, exist_ok=True)
+            thumb_path.write_bytes(b"T")
+            return True
+
+        monkeypatch.setattr(isvc_mod, "generate_thumbnail", fake_gen)
+        cfg = ImageServerConfig(directory=tmp_path, port=0)
+        h = _H(cfg, [])
+        h._serve_thumbnail("a.jpg")
+        assert 200 in h._codes
+        assert h.wfile.getvalue() == b"T"
+
+
+class TestStartServer:
+    def test_HTTPServer_被调用(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        called: dict[str, bool] = {}
+
+        class FakeServer:
+            def __init__(self, addr, handler_cls) -> None:
+                called["addr"] = addr
+
+            def serve_forever(self) -> None:
+                called["served"] = True
+
+        monkeypatch.setattr(si, "HTTPServer", FakeServer)
+        cfg = ImageServerConfig(directory=tmp_path, port=1234)
+        si.start_server(cfg, [])
+        assert called["served"] is True

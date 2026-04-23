@@ -250,3 +250,182 @@ class TestFilterCommand:
         monkeypatch.setattr(image_mod, "_require_pillow", raise_any)
         code, _ = _run(["filter", "-n", "fuji-cc"])
         assert code == 1
+
+
+class TestRawCommandSuccess:
+    def test_正常流程_串行(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        monkeypatch.setattr(image_mod, "_require_rawpy", lambda: None)
+
+        # 伪 RAW 文件
+        r1 = tmp_path / "a.CR3"
+        r1.write_bytes(b"x")
+        r2 = tmp_path / "b.ARW"
+        r2.write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        processed: list[Path] = []
+
+        def fake_convert(src, dst, **k):
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"JPG")
+            processed.append(src)
+
+        monkeypatch.setattr(isvc, "convert_raw", fake_convert)
+
+        code, out = _run(["raw", "-d", str(tmp_path), "-j", "1"])
+        assert code == 0
+        assert "2 成功" in out
+        assert len(processed) == 2
+
+    def test_正常流程_部分失败(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        monkeypatch.setattr(image_mod, "_require_rawpy", lambda: None)
+
+        (tmp_path / "a.CR3").write_bytes(b"x")
+        (tmp_path / "b.ARW").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake_convert(src, dst, **k):
+            if "b." in src.name:
+                raise RuntimeError("broken")
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"JPG")
+
+        monkeypatch.setattr(isvc, "convert_raw", fake_convert)
+
+        code, out = _run(["raw", "-d", str(tmp_path), "-j", "1"])
+        assert code == 0
+        assert "1 成功" in out
+        assert "1 失败" in out
+
+    def test_已有输出_skip_分支(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        monkeypatch.setattr(image_mod, "_require_rawpy", lambda: None)
+
+        (tmp_path / "a.CR3").write_bytes(b"x")
+        # 预先存在输出文件
+        out_dir = tmp_path / "jpg"
+        out_dir.mkdir()
+        (out_dir / "a.jpg").write_bytes(b"exist")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake(src, dst, **k):
+            raise AssertionError("不应被调用")
+
+        monkeypatch.setattr(isvc, "convert_raw", fake)
+
+        code, out = _run(["raw", "-d", str(tmp_path), "-j", "1"])
+        assert code == 0
+        assert "1 跳过" in out
+
+    def test_filter_自动关闭_use_embedded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        monkeypatch.setattr(image_mod, "_require_rawpy", lambda: None)
+        (tmp_path / "a.CR3").write_bytes(b"x")
+
+        captured: dict[str, object] = {}
+
+        def fake(src, dst, **k):
+            captured.update(k)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"JPG")
+
+        from qxw.library.services import image_service as isvc
+        monkeypatch.setattr(isvc, "convert_raw", fake)
+
+        code, _ = _run(["raw", "-d", str(tmp_path), "-j", "1", "--filter", "fuji-cc"])
+        assert code == 0
+        assert captured["use_embedded"] is False
+        assert captured["color_filter"] == "fuji-cc"
+
+
+class TestSvgCommandSuccess:
+    def test_正常转换(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_cairosvg", lambda: None)
+        (tmp_path / "a.svg").write_bytes(b"<svg/>")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake(src, dst, **k):
+            dst.write_bytes(b"PNG")
+
+        monkeypatch.setattr(isvc, "convert_svg_to_png", fake)
+        code, out = _run(["svg", "-d", str(tmp_path), "-j", "1"])
+        assert code == 0
+        assert "1 成功" in out
+
+    def test_已存在_PNG_跳过(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_cairosvg", lambda: None)
+        (tmp_path / "a.svg").write_bytes(b"<svg/>")
+        (tmp_path / "a.png").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+        monkeypatch.setattr(isvc, "convert_svg_to_png", lambda *a, **k: (_ for _ in ()).throw(AssertionError()))
+        code, out = _run(["svg", "-d", str(tmp_path), "-j", "1", "--no-overwrite"])
+        assert code == 0
+        assert "1 跳过" in out
+
+    def test_转换失败_fail_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_cairosvg", lambda: None)
+        (tmp_path / "a.svg").write_bytes(b"<svg/>")
+
+        from qxw.library.services import image_service as isvc
+        monkeypatch.setattr(
+            isvc, "convert_svg_to_png", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("x")),
+        )
+        code, out = _run(["svg", "-d", str(tmp_path), "-j", "1"])
+        assert code == 0
+        assert "1 失败" in out
+
+
+class TestFilterCommandSuccess:
+    def test_正常调色(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        (tmp_path / "a.jpg").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake(src, dst, name, quality):
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_bytes(b"OK")
+
+        monkeypatch.setattr(isvc, "apply_filter_to_image", fake)
+        code, out = _run(["filter", "-n", "fuji-cc", "-d", str(tmp_path), "-j", "1"])
+        assert code == 0
+        assert "1 成功" in out
+
+    def test_跳过输出目录内部(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        # 预先创建 filtered 子目录及其中的图片，递归扫描会把它们也扫进来
+        out_dir = tmp_path / "filtered"
+        out_dir.mkdir()
+        (out_dir / "old.jpg").write_bytes(b"old")
+        # 无顶层文件
+        code, out = _run([
+            "filter", "-n", "fuji-cc", "-d", str(tmp_path), "-r", "-j", "1",
+        ])
+        assert code == 0
+        # 所有被扫到的文件都位于 out_dir，应该被跳过
+        assert "1 跳过" in out or "未找到" in out

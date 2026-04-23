@@ -128,3 +128,38 @@ class TestHelloConfig:
     def test_非法类型被_Pydantic_拒绝(self) -> None:
         with pytest.raises(Exception):
             hello_mod.HelloConfig(name=123, tui_mode="not_bool")  # type: ignore[arg-type]
+
+
+class TestHelloApp:
+    def test_config_被存入_app(self) -> None:
+        cfg = hello_mod.HelloConfig(name="Bob", tui_mode=True)
+        app = hello_mod.HelloApp(cfg)
+        assert app.config is cfg
+        assert app.SUB_TITLE.startswith("v")
+
+    def test_action_toggle_dark_切换_theme(self) -> None:
+        cfg = hello_mod.HelloConfig()
+        app = hello_mod.HelloApp(cfg)
+        app.theme = "textual-light"
+        app.action_toggle_dark()
+        assert app.theme == "textual-dark"
+        app.action_toggle_dark()
+        assert app.theme == "textual-light"
+
+    def test_compose_通过_pilot_运行(self) -> None:
+        """用 Pilot 驱动 HelloApp，确保 compose/Footer/quit 路径能跑通"""
+        import asyncio
+
+        cfg = hello_mod.HelloConfig(name="Tester")
+
+        async def _go() -> None:
+            app = hello_mod.HelloApp(cfg)
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                # 触发切主题
+                await pilot.press("d")
+                await pilot.pause()
+                # 退出
+                await pilot.press("q")
+
+        asyncio.run(_go())

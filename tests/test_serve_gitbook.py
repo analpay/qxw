@@ -278,3 +278,145 @@ class TestGitbookServerConfig:
         cfg = GitbookServerConfig(directory=tmp_path)
         assert cfg.host == "127.0.0.1"
         assert cfg.port == 8000
+
+
+class TestDoGetRouting:
+    def test_index_路径(self, tmp_path: Path) -> None:
+        (tmp_path / "README.md").write_text("# 根\n正文\n", encoding="utf-8")
+        h = _TestHandler(tmp_path)
+        h.path = "/"
+        h.do_GET()
+        assert 200 in h._codes
+        body = h.wfile.getvalue().decode("utf-8")
+        assert "根" in body
+
+    def test_index_无_README(self, tmp_path: Path) -> None:
+        h = _TestHandler(tmp_path)
+        h.path = "/"
+        h.do_GET()
+        assert 200 in h._codes
+        body = h.wfile.getvalue().decode("utf-8")
+        assert "请从左侧" in body
+
+    def test_markdown_页面(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("# A 文章\n正文", encoding="utf-8")
+        h = _TestHandler(tmp_path)
+        h.path = "/a.md"
+        h.do_GET()
+        assert 200 in h._codes
+        body = h.wfile.getvalue().decode("utf-8")
+        assert "A 文章" in body
+
+    def test_markdown_不存在_404(self, tmp_path: Path) -> None:
+        h = _TestHandler(tmp_path)
+        h.path = "/nope.md"
+        h.do_GET()
+        assert 404 in h._codes
+
+    def test_静态资源_正常(self, tmp_path: Path) -> None:
+        (tmp_path / "logo.png").write_bytes(b"PNG")
+        h = _TestHandler(tmp_path)
+        h.path = "/logo.png"
+        h.do_GET()
+        assert 200 in h._codes
+        assert h.wfile.getvalue() == b"PNG"
+
+    def test_静态资源_扩展名不允许_403(self, tmp_path: Path) -> None:
+        (tmp_path / "secret.sh").write_text("#!/bin/sh")
+        h = _TestHandler(tmp_path)
+        h.path = "/secret.sh"
+        h.do_GET()
+        assert 403 in h._codes
+
+    def test_PDF_单页_路由(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.md").write_text("# x", encoding="utf-8")
+        monkeypatch.setattr(sg, "_require_weasyprint", lambda: None)
+        monkeypatch.setattr(sg, "_render_md_to_pdf", lambda md: b"%PDF-fake")
+        h = _TestHandler(tmp_path)
+        h.path = "/__pdf__/a.md"
+        h.do_GET()
+        assert 200 in h._codes
+        assert h.wfile.getvalue().startswith(b"%PDF")
+        # Content-Type
+        assert any(n == "Content-Type" and v == "application/pdf" for n, v in h._headers_out)
+
+    def test_PDF_整本_路由(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.md").write_text("# x", encoding="utf-8")
+        monkeypatch.setattr(sg, "_require_weasyprint", lambda: None)
+        monkeypatch.setattr(sg, "_render_all_md_to_pdf", lambda base: b"%PDF-all")
+        h = _TestHandler(tmp_path)
+        h.path = "/__pdf__/all"
+        h.do_GET()
+        assert 200 in h._codes
+        assert h.wfile.getvalue() == b"%PDF-all"
+
+
+class TestServeAllPdfSuccess:
+    def test_正常返回_PDF(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "README.md").write_text("# 根", encoding="utf-8")
+        (tmp_path / "a.md").write_text("# x", encoding="utf-8")
+        monkeypatch.setattr(sg, "_require_weasyprint", lambda: None)
+        monkeypatch.setattr(sg, "_render_all_md_to_pdf", lambda base: b"%PDF-x")
+        h = _TestHandler(tmp_path)
+        h._serve_all_pdf()
+        assert 200 in h._codes
+
+    def test_Exception_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sg, "_require_weasyprint", lambda: None)
+        monkeypatch.setattr(sg, "_render_all_md_to_pdf", lambda b: (_ for _ in ()).throw(RuntimeError("x")))
+        h = _TestHandler(tmp_path)
+        h._serve_all_pdf()
+        assert 500 in h._codes
+
+
+class TestRenderMdToPdf:
+    def test_调用_weasyprint(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        md = tmp_path / "a.md"
+        md.write_text("# 标题\n", encoding="utf-8")
+
+        captured: dict[str, object] = {}
+
+        class FakeHTML:
+            def __init__(self, string, base_url) -> None:
+                captured["string"] = string
+                captured["base_url"] = base_url
+
+            def write_pdf(self) -> bytes:
+                return b"%PDF"
+
+        import sys as _sys
+        fake_mod = type(_sys)("weasyprint")
+        fake_mod.HTML = FakeHTML  # type: ignore[attr-defined]
+        monkeypatch.setitem(_sys.modules, "weasyprint", fake_mod)
+
+        out = sg._render_md_to_pdf(md)
+        assert out == b"%PDF"
+        assert "标题" in captured["string"]
+
+
+class TestRenderAllMdToPdf:
+    def test_空目录_抛_QxwError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with pytest.raises(QxwError, match="未找到"):
+            sg._render_all_md_to_pdf(tmp_path)
+
+
+class TestStartServer:
+    def test_端口占用_透传_OSError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(*a, **k):
+            raise OSError("in use")
+
+        monkeypatch.setattr(sg, "HTTPServer", boom)
+        with pytest.raises(OSError):
+            sg.start_server(GitbookServerConfig(directory=tmp_path))

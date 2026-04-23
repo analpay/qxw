@@ -131,3 +131,88 @@ class TestRunAnimation:
         out = sbdqf_mod._run_animation(FakeStdscr(), rounds=1, duration=None)  # type: ignore[arg-type]
         assert out is None
         assert "in" not in scan_called  # 提前 return，不进 single_pass
+
+    def test_完整运行_rounds_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """驱动 _run_single_pass 完整覆盖绘制分支"""
+        monkeypatch.setattr(curses, "curs_set", lambda _v: None)
+        # 加速 sleep
+        monkeypatch.setattr(sbdqf_mod.time, "sleep", lambda _s: None)
+
+        class FakeStdscr:
+            def __init__(self) -> None:
+                self._lines: list[tuple[int, int, str]] = []
+
+            def getmaxyx(self) -> tuple[int, int]:
+                return (30, 60)  # 够大，能放下 7 行老鼠
+
+            def nodelay(self, _v: bool) -> None:
+                return None
+
+            def timeout(self, _v: int) -> None:
+                return None
+
+            def erase(self) -> None:
+                self._lines.clear()
+
+            def addstr(self, row: int, col: int, text: str) -> None:
+                self._lines.append((row, col, text))
+
+            def refresh(self) -> None:
+                return None
+
+        sbdqf_mod._run_animation(FakeStdscr(), rounds=1, duration=None)  # type: ignore[arg-type]
+
+    def test_duration_触发超时退出(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(curses, "curs_set", lambda _v: None)
+        monkeypatch.setattr(sbdqf_mod.time, "sleep", lambda _s: None)
+
+        # 把 monotonic 起始点拉大，让 deadline 立刻过期
+        ts = iter([0.0] + [100.0] * 2000)  # 第二次读已经远超 deadline
+        monkeypatch.setattr(sbdqf_mod.time, "monotonic", lambda: next(ts))
+
+        class FakeStdscr:
+            def getmaxyx(self) -> tuple[int, int]:
+                return (30, 60)
+
+            def nodelay(self, _v: bool) -> None:
+                return None
+
+            def timeout(self, _v: int) -> None:
+                return None
+
+            def erase(self) -> None:
+                pass
+
+            def addstr(self, *a, **k) -> None:
+                pass
+
+            def refresh(self) -> None:
+                pass
+
+        sbdqf_mod._run_animation(FakeStdscr(), rounds=None, duration=1)  # type: ignore[arg-type]
+
+    def test_addstr_curses_error_被吞(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """addstr 抛 curses.error 时不应向上传播"""
+        monkeypatch.setattr(curses, "curs_set", lambda _v: None)
+        monkeypatch.setattr(sbdqf_mod.time, "sleep", lambda _s: None)
+
+        class FakeStdscr:
+            def getmaxyx(self) -> tuple[int, int]:
+                return (30, 60)
+
+            def nodelay(self, _v: bool) -> None:
+                return None
+
+            def timeout(self, _v: int) -> None:
+                return None
+
+            def erase(self) -> None:
+                pass
+
+            def addstr(self, *a, **k) -> None:
+                raise curses.error("边界")
+
+            def refresh(self) -> None:
+                pass
+
+        sbdqf_mod._run_animation(FakeStdscr(), rounds=1, duration=None)  # type: ignore[arg-type]

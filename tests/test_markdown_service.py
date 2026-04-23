@@ -269,6 +269,219 @@ class TestWriteImage:
         assert dest.read_bytes() == b"PNG"
         assert captured["kwargs"]["scale"] == 2
 
+    def test_jpg_调用_cairosvg_和_PIL(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeCairosvg:
+            @staticmethod
+            def svg2png(**kwargs):
+                write_to = kwargs.get("write_to")
+                # write_to 为 BytesIO
+                write_to.write(b"\x89PNG\r\n\x1a\n")  # 简化 PNG 签名
+
+        # 构造假 PIL
+        class FakeAlphaChannel:
+            def split_mock(self):
+                return self
+
+        class FakePILImg:
+            size = (8, 8)
+            mode = "RGBA"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def convert(self, mode):
+                assert mode == "RGBA"
+                return self
+
+            def split(self):
+                return [self, self, self, self]  # 第 -1 个作为 mask
+
+        class FakeCanvas:
+            def __init__(self, mode, size, color) -> None:
+                self.mode = mode
+                self.size = size
+                self.fill = color
+                self.pasted = False
+
+            def paste(self, im, mask) -> None:
+                self.pasted = True
+
+            def save(self, path, fmt, quality, progressive) -> None:
+                Path(path).write_bytes(b"JPG")
+
+        pil_mod = type(sys)("PIL")
+        image_pkg = type(sys)("PIL.Image")
+
+        class FakeImageCls:
+            @staticmethod
+            def open(buf):
+                return FakePILImg()
+
+            @staticmethod
+            def new(mode, size, color):
+                return FakeCanvas(mode, size, color)
+
+        image_pkg.Image = FakeImageCls  # type: ignore[attr-defined]
+        # PIL.Image 作为子模块
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "PIL", pil_mod)
+        monkeypatch.setitem(sys.modules, "PIL.Image", image_pkg)
+        monkeypatch.setitem(sys.modules, "cairosvg", FakeCairosvg)
+
+        dest = tmp_path / "o.jpg"
+        mks.write_image(
+            b'<svg width="10" height="10"/>', dest, fmt="jpg",
+            scale=2, font_family="", background="white", quality=95,
+        )
+        assert dest.read_bytes() == b"JPG"
+
+    def test_jpg_transparent_背景落白(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeCairosvg:
+            @staticmethod
+            def svg2png(**kwargs):
+                write_to = kwargs.get("write_to")
+                write_to.write(b"\x89PNG")
+
+        class FakePILImg:
+            size = (4, 4)
+            mode = "RGBA"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def convert(self, mode):
+                return self
+
+            def split(self):
+                return [self, self, self, self]
+
+        captured: dict[str, tuple] = {}
+
+        class FakeCanvas:
+            def __init__(self, mode, size, color) -> None:
+                captured["fill"] = color
+
+            def paste(self, im, mask) -> None:
+                pass
+
+            def save(self, path, fmt, quality, progressive) -> None:
+                Path(path).write_bytes(b"JPG")
+
+        pil_mod = type(sys)("PIL")
+        class FakeImageCls:
+            @staticmethod
+            def open(buf):
+                return FakePILImg()
+
+            @staticmethod
+            def new(mode, size, color):
+                return FakeCanvas(mode, size, color)
+
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "PIL", pil_mod)
+        monkeypatch.setitem(sys.modules, "cairosvg", FakeCairosvg)
+
+        dest = tmp_path / "o.jpg"
+        mks.write_image(
+            b'<svg width="10" height="10"/>', dest, fmt="jpg",
+            scale=1, font_family="", background="transparent", quality=90,
+        )
+        # transparent 落到白色
+        assert captured["fill"] == (255, 255, 255)
+
+    def test_jpg_black_背景(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeCairosvg:
+            @staticmethod
+            def svg2png(**kwargs):
+                kwargs.get("write_to").write(b"\x89PNG")
+
+        class FakePILImg:
+            size = (2, 2)
+            mode = "RGBA"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def convert(self, m):
+                return self
+
+            def split(self):
+                return [self, self, self, self]
+
+        captured: dict[str, tuple] = {}
+
+        class FakeCanvas:
+            def __init__(self, mode, size, color) -> None:
+                captured["fill"] = color
+
+            def paste(self, im, mask) -> None:
+                pass
+
+            def save(self, path, fmt, quality, progressive) -> None:
+                Path(path).write_bytes(b"JPG")
+
+        pil_mod = type(sys)("PIL")
+        class FakeImageCls:
+            @staticmethod
+            def open(buf):
+                return FakePILImg()
+
+            @staticmethod
+            def new(mode, size, color):
+                return FakeCanvas(mode, size, color)
+
+        pil_mod.Image = FakeImageCls  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "PIL", pil_mod)
+        monkeypatch.setitem(sys.modules, "cairosvg", FakeCairosvg)
+
+        dest = tmp_path / "o.jpg"
+        mks.write_image(
+            b'<svg width="10" height="10"/>', dest, fmt="jpg",
+            scale=1, font_family="", background="black", quality=90,
+        )
+        assert captured["fill"] == (0, 0, 0)
+
+    def test_jpg_缺_PIL_ImportError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeCairosvg:
+            @staticmethod
+            def svg2png(**kwargs):
+                kwargs.get("write_to").write(b"\x89PNG")
+
+        monkeypatch.setitem(sys.modules, "cairosvg", FakeCairosvg)
+
+        import builtins as _bi
+
+        real_import = _bi.__import__
+
+        def fake_import(name, *a, **k):
+            if name == "PIL":
+                raise ImportError
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(_bi, "__import__", fake_import)
+        with pytest.raises(QxwError, match="Pillow"):
+            mks.write_image(
+                b"<svg/>", tmp_path / "o.jpg", fmt="jpg",
+                scale=1, font_family="", background="white", quality=90,
+            )
+
 
 class TestConvertMarkdownForWx:
     def test_不支持的_fmt_抛_QxwError(self, tmp_path: Path) -> None:

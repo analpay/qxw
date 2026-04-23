@@ -274,3 +274,116 @@ class TestStartServer:
         )
         with pytest.raises(OSError):
             sf.start_server(cfg)
+
+    def test_正常启动_serve_forever_被调用(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        called: dict[str, bool] = {}
+
+        class FakeServer:
+            def __init__(self, addr, handler_cls) -> None:
+                called["addr"] = addr
+
+            def serve_forever(self) -> None:
+                called["served"] = True
+
+        monkeypatch.setattr(sf, "HTTPServer", FakeServer)
+        cfg = FileWebServerConfig(
+            directory=tmp_path, port=9999,
+            auth=AuthConfig(username="u", password="p"),
+        )
+        sf.start_server(cfg)
+        assert called["served"] is True
+        assert called["addr"] == ("0.0.0.0", 9999)
+
+
+class TestServeDirectory:
+    def test_目录正常渲染_HTML(self, handler: _BuiltHandler, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("hello")
+        (tmp_path / "sub").mkdir()
+        handler.headers["Authorization"] = _basic("user", "pass")
+        handler.path = "/"
+        handler.do_GET()
+        assert 200 in [c for c, _ in handler._response_log]
+        body = handler.wfile.getvalue().decode("utf-8")
+        assert "a.txt" in body
+        assert "sub" in body
+
+    def test_子目录带_上级目录_链接(self, handler: _BuiltHandler, tmp_path: Path) -> None:
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "inside.txt").write_text("x")
+        handler.headers["Authorization"] = _basic("user", "pass")
+        handler.path = "/sub/"
+        handler.do_GET()
+        assert 200 in [c for c, _ in handler._response_log]
+        body = handler.wfile.getvalue().decode("utf-8")
+        assert "上级目录" in body
+        assert "inside.txt" in body
+
+    def test_隐藏文件被忽略(self, handler: _BuiltHandler, tmp_path: Path) -> None:
+        (tmp_path / ".hidden").write_text("x")
+        (tmp_path / "visible.txt").write_text("x")
+        handler.headers["Authorization"] = _basic("user", "pass")
+        handler.path = "/"
+        handler.do_GET()
+        body = handler.wfile.getvalue().decode("utf-8")
+        assert "visible.txt" in body
+        assert ".hidden" not in body
+
+    def test_目录无权限_403(
+        self, handler: _BuiltHandler, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pathlib import Path as _P
+
+        def fail_iterdir(self):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr(_P, "iterdir", fail_iterdir)
+        handler.headers["Authorization"] = _basic("user", "pass")
+        handler.path = "/"
+        handler.do_GET()
+        assert 403 in [c for c, _ in handler._response_log]
+
+
+class TestServeFileError:
+    def test_PermissionError_返回_403(
+        self, handler: _BuiltHandler, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.txt").write_text("x")
+        # patch open 让其抛 PermissionError
+        real_open = open
+
+        def fail_open(p, *a, **k):
+            if str(p).endswith("a.txt"):
+                raise PermissionError("denied")
+            return real_open(p, *a, **k)
+
+        monkeypatch.setattr("builtins.open", fail_open)
+        handler.headers["Authorization"] = _basic("user", "pass")
+        handler.path = "/a.txt?dl=1"
+        handler.do_GET()
+        assert 403 in [c for c, _ in handler._response_log]
+
+    def test_其他异常_500(
+        self, handler: _BuiltHandler, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.txt").write_text("x")
+        real_open = open
+
+        def fail_open(p, *a, **k):
+            if str(p).endswith("a.txt"):
+                raise RuntimeError("broken")
+            return real_open(p, *a, **k)
+
+        monkeypatch.setattr("builtins.open", fail_open)
+        handler.headers["Authorization"] = _basic("user", "pass")
+        handler.path = "/a.txt?dl=1"
+        handler.do_GET()
+        assert 500 in [c for c, _ in handler._response_log]
+
+
+class TestLogMessage:
+    def test_不抛错__debug_日志(self, handler: _BuiltHandler) -> None:
+        # 只验证调用时不抛错
+        handler.log_message("%s", "ok")

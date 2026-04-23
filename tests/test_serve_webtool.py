@@ -251,6 +251,144 @@ class TestCertParse:
         with pytest.raises(Exception):
             _cert_parse("notbase64!!!")
 
+    def test_合法_PEM_证书输出字段(self) -> None:
+        # 动态生成一张自签证书用于解析
+        import datetime as _dt
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+
+        priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subj = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, "qxw-test.com"),
+        ])
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subj)
+            .issuer_name(subj)
+            .public_key(priv.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(_dt.datetime.now(_dt.timezone.utc))
+            .not_valid_after(_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=1))
+            .add_extension(
+                x509.SubjectAlternativeName([x509.DNSName("qxw-test.com")]),
+                critical=False,
+            )
+            .add_extension(
+                x509.BasicConstraints(ca=False, path_length=None),
+                critical=True,
+            )
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True, content_commitment=False,
+                    key_encipherment=True, data_encipherment=False,
+                    key_agreement=False, key_cert_sign=False,
+                    crl_sign=False, encipher_only=False, decipher_only=False,
+                ),
+                critical=False,
+            )
+            .sign(priv, hashes.SHA256())
+        )
+        pem = cert.public_bytes(serialization.Encoding.PEM).decode()
+        out = _cert_parse(pem)
+        assert "qxw-test.com" in out
+        assert "SAN" in out
+        assert "CA" in out
+        assert "SHA256 指纹" in out
+        assert "SHA1 指纹" in out
+        assert "密钥用途" in out
+
+
+class TestCryptoImportErrorPaths:
+    def test_aes_crypto_缺失(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins as _bi
+        real_import = _bi.__import__
+
+        def fake(name, *a, **k):
+            if name.startswith("cryptography"):
+                raise ImportError
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(_bi, "__import__", fake)
+        with pytest.raises(RuntimeError, match="cryptography"):
+            sw._aes_process("x", "00" * 16, "", "cbc", "encrypt")
+
+    def test_des_crypto_缺失(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins as _bi
+        real_import = _bi.__import__
+
+        def fake(name, *a, **k):
+            if name.startswith("cryptography"):
+                raise ImportError
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(_bi, "__import__", fake)
+        with pytest.raises(RuntimeError, match="cryptography"):
+            sw._des_process("x", "00" * 8, "", "encrypt", triple=False)
+
+    def test_rsa_crypto_缺失(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins as _bi
+        real_import = _bi.__import__
+
+        def fake(name, *a, **k):
+            if name.startswith("cryptography"):
+                raise ImportError
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(_bi, "__import__", fake)
+        with pytest.raises(RuntimeError, match="cryptography"):
+            sw._rsa_process("generate")
+
+    def test_ed25519_crypto_缺失(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins as _bi
+        real_import = _bi.__import__
+
+        def fake(name, *a, **k):
+            if name.startswith("cryptography"):
+                raise ImportError
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(_bi, "__import__", fake)
+        with pytest.raises(RuntimeError, match="cryptography"):
+            sw._ed25519_process("generate")
+
+    def test_cert_crypto_缺失(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins as _bi
+        real_import = _bi.__import__
+
+        def fake(name, *a, **k):
+            if name.startswith("cryptography"):
+                raise ImportError
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(_bi, "__import__", fake)
+        with pytest.raises(RuntimeError, match="cryptography"):
+            _cert_parse("-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----")
+
+
+class TestStartServer:
+    def test_start_初始化_页面(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        called: dict[str, bool] = {}
+
+        class FakeServer:
+            def __init__(self, addr, handler_cls) -> None:
+                called["addr"] = addr
+                called["handler"] = handler_cls
+
+            def serve_forever(self) -> None:
+                called["served"] = True
+
+        monkeypatch.setattr(sw, "HTTPServer", FakeServer)
+        cfg = WebtoolServerConfig(host="127.0.0.1", port=9001)
+        sw.start_server(cfg)
+        assert called["served"] is True
+        assert called["addr"] == ("127.0.0.1", 9001)
+        # page html 被初始化
+        assert "__VERSION__" not in _WebtoolHandler._page_html
+
 
 class TestBuildRoutes:
     def test_路由完整(self) -> None:
