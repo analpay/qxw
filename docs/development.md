@@ -206,3 +206,52 @@ def _warm_sunset(rgb: np.ndarray) -> np.ndarray:
 - RAW 单遍路径：`qxw/library/services/image_service.py` `convert_raw()`
 - 位图路径：`qxw/library/services/image_service.py` `apply_filter_to_image()` + `scan_filterable_images()`
 - CLI：`qxw/bin/image.py` `raw_command()`（`--filter` 与 `--use-embedded` 互斥检查）与 `filter_command()`（`--list` / 递归时避免把滤镜叠加到自己身上的防呆）
+
+## 单元测试
+
+项目使用 `pytest` 作为测试框架，测试代码位于 `tests/` 目录。
+
+### 运行测试
+
+```bash
+# 先激活虚拟环境
+source .venv/bin/activate
+
+# 安装开发依赖（首次）
+pip install -e ".[dev]"
+
+# 跑全部测试
+pytest
+
+# 单文件 / 单用例
+pytest tests/test_chat_provider_manager.py
+pytest tests/test_exceptions.py::TestQxwError::test_默认退出码为_1
+
+# 带覆盖率
+pytest --cov=qxw --cov-report=term-missing
+```
+
+pytest 配置在 `pyproject.toml` 的 `[tool.pytest.ini_options]`，默认读取 `tests/` 目录下的 `test_*.py`。
+
+### 测试目录结构
+
+```
+tests/
+├── conftest.py                        # 全局 fixtures（HOME 隔离、内存数据库）
+├── test_exceptions.py                 # QxwError 及子类
+├── test_settings.py                   # 配置加载（默认 / JSON / 环境变量）
+├── test_init.py                       # 环境初始化 check_env / init_env
+├── test_chat_provider_manager.py      # ChatProvider CRUD（in-memory sqlite）
+├── test_color_filters.py              # 调色滤镜注册中心
+├── test_markdown_service.py           # PlantUML 围栏提取 / SVG 注入等纯函数
+└── test_str_cmd.py                    # qxw-str 命令（click CliRunner）
+```
+
+### 编写新测试的约定
+
+1. **用例 / 类 / 文件命名**：`test_*.py` / `Test*` / `test_*`；中文函数名可用于描述具体行为。
+2. **隔离 HOME**：`conftest.py` 中的 `_isolated_home` fixture 会把 `$HOME` 以及 `QXW_CONFIG_DIR` / `QXW_LOG_DIR` / `QXW_DB_URL` 指向 `tmp_path`，避免测试污染用户真实 `~/.config/qxw/`。注意：`AppSettings` 中的 `Path.home()` 默认值是在模块导入时冻结的，因此必须靠 `QXW_*` 环境变量覆盖，而不能只改 `HOME`。
+3. **隔离数据库**：需要访问 `ChatProvider` 等 ORM 的用例使用 `in_memory_db` fixture。它基于 `sqlite://` + `StaticPool` 创建共享连接，并 monkeypatch 掉 `qxw.library.models.base.get_db_session` 和 `qxw.library.managers.chat_provider_manager.get_db_session` 两处引用。
+4. **单例复位**：`_reset_settings_singleton` 在每个用例前后清空 `qxw.config.settings._settings`，确保环境变量改动能被下一次 `get_settings()` 看到。
+5. **CLI 测试**：使用 `click.testing.CliRunner.invoke(main, args, input=stdin)` 而非真 subprocess，速度更快、更易断言。
+6. **不触发外部进程**：`markdown_service` 仅测试纯函数（围栏提取 / 背景注入 / skinparam 生成），不跑 `java -jar plantuml.jar`。图片服务中依赖 `cairosvg` / `rawpy` 的路径同理暂不覆盖。
