@@ -53,6 +53,35 @@ def _reset_settings_singleton() -> Generator[None, None, None]:
     settings_mod._settings = None
 
 
+@pytest.fixture(autouse=True)
+def _dispose_engines() -> Generator[None, None, None]:
+    """追踪并在用例结束时 dispose 所有经 ``get_engine`` 创建的 engine
+
+    避免 sqlite 连接在 GC 阶段才关闭，产生 ResourceWarning。
+    """
+    from qxw.library.models import base as models_base
+
+    created: list = []
+    orig = models_base.get_engine
+
+    def _tracking() -> object:
+        eng = orig()
+        created.append(eng)
+        return eng
+
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(models_base, "get_engine", _tracking)
+    try:
+        yield
+    finally:
+        monkey.undo()
+        for eng in created:
+            try:
+                eng.dispose()
+            except Exception:  # noqa: BLE001
+                pass
+
+
 @pytest.fixture()
 def in_memory_db(monkeypatch: pytest.MonkeyPatch) -> Generator[sessionmaker[Session], None, None]:
     """提供一个共享连接的 sqlite in-memory 引擎，并替换 get_db_session

@@ -5,12 +5,17 @@
 - --quiet / --bytes 仅输出纯数字
 - 冲突参数与缺参校验的退出码
 - stdin 读取（模拟管道）
+- TTY + 无输入、KeyboardInterrupt、未预期 Exception 分支
 """
 
 from __future__ import annotations
 
+from io import BytesIO
+
+import pytest
 from click.testing import CliRunner
 
+from qxw.bin import str_cmd as str_cmd_mod
 from qxw.bin.str_cmd import main
 
 
@@ -81,3 +86,37 @@ class TestTopLevel:
         code, out = _run(["--version"])
         assert code == 0
         assert "版本" in out
+
+
+class _TTYInput(BytesIO):
+    """伪装成 TTY 的 stdin，用来驱动 isatty() 为 True 的分支"""
+
+    def isatty(self) -> bool:  # noqa: D401
+        return True
+
+
+class TestErrorBranches:
+    def test_TTY_且无参数_退出码_2(self) -> None:
+        # CliRunner 默认 stdin 不是 TTY；这里塞一个 isatty()=True 的字节流
+        runner = CliRunner()
+        result = runner.invoke(main, ["len"], input=_TTYInput(b""))
+        assert result.exit_code == 2
+        assert "未提供字符串参数" in result.output
+
+    def test_KeyboardInterrupt_退出码_130(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def raise_kb(*_a, **_kw) -> None:
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(str_cmd_mod.logger, "info", raise_kb)
+        code, out = _run(["len", "hi"])
+        assert code == 130
+        assert "已取消" in out
+
+    def test_未预期_Exception_退出码_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def raise_any(*_a, **_kw) -> None:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(str_cmd_mod.logger, "info", raise_any)
+        code, out = _run(["len", "hi"])
+        assert code == 1
+        assert "未预期" in out
