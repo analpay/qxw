@@ -170,6 +170,10 @@ qxw-image raw -d ~/Photos --filter fuji-cc
 qxw-image filter --list                             # 查看所有可用滤镜
 qxw-image filter -n ghibli -d ~/Photos/exports      # 吉卜力风格，输出到 exports/filtered/
 
+# 自动调整亮度/对比/饱和（按档位预设，支持 HDR 观感、保留 EXIF）
+qxw-image change -d ~/Photos/exports                # 默认 balanced 档，输出到 exports/changed/
+qxw-image change -d ~/Photos/exports -i punchy --hdr  # 强力档 + HDR
+
 # 将目录下所有 SVG 批量转成同名 PNG（默认递归、2x 缩放、覆盖同名文件、白底）
 qxw-image svg -d ./assets
 

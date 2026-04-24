@@ -207,6 +207,53 @@ def _warm_sunset(rgb: np.ndarray) -> np.ndarray:
 - 位图路径：`qxw/library/services/image_service.py` `apply_filter_to_image()` + `scan_filterable_images()`
 - CLI：`qxw/bin/image.py` `raw_command()`（`--filter` 与 `--use-embedded` 互斥检查）与 `filter_command()`（`--list` / 递归时避免把滤镜叠加到自己身上的防呆）
 
+## 扩展：自动增强（qxw-image change）
+
+`qxw/library/services/auto_enhance.py` 提供 `qxw-image change` 子命令所需的自适应亮度 / 对比 / 饱和增强算法，纯 numpy 实现，不依赖 OpenCV。与调色滤镜注册中心**独立**，因为自动增强需要基于图像统计量动态调参（不是无状态的 `rgb → rgb` 映射）。
+
+### 公共 API
+
+```python
+from qxw.library.services.auto_enhance import (
+    auto_enhance,           # (rgb, intensity="balanced", hdr=False) -> rgb
+    INTENSITY_PRESETS,      # dict[str, dict[str, float]]，档位参数表
+    AVAILABLE_INTENSITIES,  # ("subtle", "balanced", "punchy")
+)
+```
+
+### 档位参数（`INTENSITY_PRESETS`）
+
+每个档位是一组互相协调的数值，**不要单独调任何一项**，容易失衡。所有键：
+
+| 键 | 含义 |
+|----|------|
+| `auto_levels_low_pct` / `auto_levels_high_pct` | L 通道裁剪尾部的百分位数 |
+| `clahe_clip_limit` | CLAHE 直方图裁剪阈值（平均 bin 高度的倍数） |
+| `clahe_tile_grid` | CLAHE 每一维的 tile 数（正方形 tile 网格） |
+| `gamma_target_median` | 中位数 gamma 校正的目标中位亮度（0–1 归一化） |
+| `vibrance_boost` | 饱和提升系数 |
+| `hdr_detail_boost` | HDR 模式下 detail 层放大倍数 |
+| `low_light_threshold` | 暗光分支触发阈值（L 中位数 / 100） |
+| `skin_vibrance_damp` | 肤色区域 vibrance 保留比例（越小越保护） |
+
+### 算法流程
+
+见 `qxw/library/services/auto_enhance.py` 顶部 docstring。核心分支：
+- **暗光**：L 中位数 < 阈值 → IAGCWD-style 加权 CDF（面向暗光的自适应 gamma）
+- **正常**：auto-levels（Simplest Color Balance, Limare et al. IPOL 2011）+ 中位数 gamma
+- **CLAHE**：纯 numpy tile 分块 + 像素级双线性插值（避免 tile 边界伪影）
+- **HDR**：Gaussian 低通得 base 层、log-domain arctan 压缩、detail = 原 - base、合成（Durand-Dorsey lite）
+- **肤色 mask**：HSV 空间 H/S/V 三维 smoothstep 乘积；该区域 vibrance boost 打折
+- **Vibrance**：`S' = S + (1-S) × boost × weight × activation(S, 0.02, 0.12)`，activation 门控保证灰度像素 S=0 不被引入色偏
+
+### 服务层
+
+- `qxw/library/services/image_service.py::auto_enhance_image(src, dst, *, intensity, hdr, quality, preserve_exif)`：位图 → auto_enhance → JPEG。HEIC 走 `_open_heic_as_pil`；RGBA 合并白底；EXIF orientation tag 特殊处理（读取后像素按 orientation 旋转 + 把 tag 清为 1，避免查看器二次旋转）。
+
+### CLI
+
+- `qxw/bin/image.py::change_command`：选项 `--intensity/--hdr/--preserve-exif/--overwrite/--workers/...`，骨架与 `filter_command` 对齐。
+
 ## 单元测试
 
 项目使用 `pytest` 作为测试框架，测试代码位于 `tests/` 目录。
@@ -243,6 +290,9 @@ tests/
 ├── test_init.py                       # 环境初始化 check_env / init_env
 ├── test_chat_provider_manager.py      # ChatProvider CRUD（in-memory sqlite）
 ├── test_color_filters.py              # 调色滤镜注册中心
+├── test_auto_enhance.py               # 自动增强算法（边界 / 暗光 / HDR / 肤色）
+├── test_image_service_auto_enhance.py # auto_enhance_image 服务层（EXIF / RGBA / HEIC）
+├── test_image_cli_change.py           # qxw-image change CLI（click CliRunner）
 ├── test_markdown_service.py           # PlantUML 围栏提取 / SVG 注入等纯函数
 └── test_str_cmd.py                    # qxw-str 命令（click CliRunner）
 ```

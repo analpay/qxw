@@ -362,6 +362,119 @@ def apply_filter_to_image(
 
 
 # ============================================================
+# 自动增强（亮度 / 对比 / 饱和 / HDR）
+# ============================================================
+
+
+# EXIF orientation tag (TIFF / EXIF 规范)
+_EXIF_ORIENTATION_TAG = 274
+
+
+def auto_enhance_image(
+    src: Path,
+    dst: Path,
+    *,
+    intensity: str = "balanced",
+    hdr: bool = False,
+    quality: int = DEFAULT_JPEG_QUALITY,
+    preserve_exif: bool = True,
+) -> None:
+    """对已有位图做自动亮度/对比/饱和调整，JPEG 写出，可选保留 EXIF
+
+    为 ``qxw-image change`` 子命令设计。算法实现参见
+    :mod:`qxw.library.services.auto_enhance`。
+
+    Args:
+        src: 源图片路径（支持 FILTERABLE_IMAGE_EXTENSIONS 列出的格式）
+        dst: 目标 JPG 路径（父目录会自动创建）
+        intensity: 档位 (subtle / balanced / punchy)
+        hdr: 是否启用 HDR 局部 tone mapping
+        quality: JPEG 压缩质量 (1-100)
+        preserve_exif: 是否保留原图 EXIF（orientation tag 特殊处理：读取后
+            应用到像素并清为 1，避免保存后双重旋转）
+
+    Raises:
+        FileNotFoundError: 源文件不存在
+        ValueError: intensity / quality 非法
+        RuntimeError: HEIC/HEIF 无法打开（pillow-heif 未安装或解码失败）
+    """
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    from qxw.library.services.auto_enhance import AVAILABLE_INTENSITIES, auto_enhance
+
+    if intensity not in AVAILABLE_INTENSITIES:
+        raise ValueError(
+            f"非法的 intensity: {intensity!r}，可选: {', '.join(AVAILABLE_INTENSITIES)}"
+        )
+    if not (1 <= int(quality) <= 100):
+        raise ValueError(f"JPEG quality 必须在 [1, 100]，收到 {quality}")
+    if not src.exists():
+        raise FileNotFoundError(f"源文件不存在: {src}")
+
+    suffix = src.suffix.lower()
+    if suffix in (".heic", ".heif"):
+        img = _open_heic_as_pil(src)
+        if img is None:
+            raise RuntimeError(f"无法打开 HEIC/HEIF 文件: {src}")
+    else:
+        img = Image.open(src)
+
+    # 读取原始 EXIF（可能为空）；必须在 exif_transpose 之前读，因为 transpose 会清
+    # orientation tag
+    exif_bytes: bytes | None = None
+    if preserve_exif:
+        try:
+            raw = img.info.get("exif")
+            if isinstance(raw, (bytes, bytearray)):
+                exif_bytes = bytes(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("读取 EXIF 失败 %s: %s", src.name, e)
+
+    # 按 EXIF orientation 旋转像素（保留 EXIF 时会在下面把 tag 清为 1）
+    img = ImageOps.exif_transpose(img)
+
+    # 透明背景合并到白底，避免 alpha 丢失导致"脏看"
+    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    rgb = np.asarray(img, dtype=np.uint8)
+    rgb_out = auto_enhance(rgb, intensity=intensity, hdr=hdr)
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+
+    save_kwargs = {"quality": int(quality), "progressive": True}
+    if preserve_exif and exif_bytes:
+        # 把 orientation tag 清为 1（像素已经旋转过了）
+        save_kwargs["exif"] = _reset_exif_orientation(exif_bytes)
+
+    Image.fromarray(rgb_out).save(str(dst), "JPEG", **save_kwargs)
+
+
+def _reset_exif_orientation(exif_bytes: bytes) -> bytes:
+    """把 EXIF 字节串里的 orientation tag (0x0112) 清为 1，其它原样保留
+
+    若解析失败（非法 EXIF / 缺 tag），原样返回以免丢掉整段元数据。
+    """
+    try:
+        from PIL import Image
+
+        # 借 Pillow 的 Exif 容器解析 / 重编码
+        exif = Image.Exif()
+        exif.load(exif_bytes)
+        if _EXIF_ORIENTATION_TAG in exif:
+            exif[_EXIF_ORIENTATION_TAG] = 1
+        return exif.tobytes()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("EXIF orientation 重写失败，保留原始 EXIF: %s", e)
+        return exif_bytes
+
+
+# ============================================================
 # SVG 转 PNG
 # ============================================================
 

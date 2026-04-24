@@ -21,7 +21,7 @@
 |------|------|------|
 | `qxw-llm` | 🤖 AI 对话工具集合（对话 / 提供商管理 / TUI） | ✅ 可用 |
 | `qxw-serve` | 🌐 HTTP 服务集合（gitbook / webtool / file-web / image-web） | ✅ 可用 |
-| `qxw-image` | 📷 图片工具集（RAW 批量转换 / SVG 转 PNG / 调色滤镜） | ✅ 可用 |
+| `qxw-image` | 📷 图片工具集（RAW 批量转换 / SVG 转 PNG / 调色滤镜 / 自动亮度对比饱和调整） | ✅ 可用 |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） | ✅ 可用 |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） | ✅ 可用 |
 
@@ -489,7 +489,7 @@ qxw-serve image-web --no-recursive            # 不递归扫描子目录
 
 ## qxw-image
 
-图片工具集，支持将相机 RAW 文件批量转换为 JPG、将 SVG 批量栅格化为同名 PNG，以及对已有位图批量套用调色滤镜。
+图片工具集，支持将相机 RAW 文件批量转换为 JPG、将 SVG 批量栅格化为同名 PNG、对已有位图批量套用调色滤镜，以及按预设档位自动调整亮度/对比/饱和度（可选 HDR 观感）。
 
 > 图片画廊 HTTP 服务已迁移至 `qxw-serve image-web`。
 
@@ -516,15 +516,19 @@ qxw-image svg
 
 # 对已有位图（JPG/PNG 等）套用调色滤镜
 qxw-image filter -n fuji-cc -d ~/Photos/exports
+
+# 自动调整亮度 / 对比 / 饱和，输出更"舒服"的观感
+qxw-image change -d ~/Photos/exports -i balanced
 ```
 
 ### 子命令说明
 
 | 子命令 | 说明 |
 |--------|------|
-| `raw`  | 将相机导出的 RAW 图片批量转换为 JPG（可选 `--filter` 一步到位调色） |
-| `svg`  | 将 SVG 批量栅格化为同目录下的同名 PNG |
+| `raw`    | 将相机导出的 RAW 图片批量转换为 JPG（可选 `--filter` 一步到位调色） |
+| `svg`    | 将 SVG 批量栅格化为同目录下的同名 PNG |
 | `filter` | 对已有位图（JPG/PNG/TIFF/HEIC 等）批量套用调色滤镜 |
+| `change` | 对已有位图按预设档位做自动亮度 / 对比 / 饱和调整（可选 HDR 观感），详见下文 |
 
 ### raw 参数说明
 
@@ -559,6 +563,65 @@ qxw-image filter -n fuji-cc -d ~/Photos/exports
 | `--list` | - | false | 列出所有已注册的调色滤镜名后退出（忽略其他参数） |
 
 支持的输入格式：JPG / JPEG / PNG / WebP / BMP / TIFF / HEIC / HEIF。输出统一为 JPG；若要保留 RAW 的最佳画质，请改用 `raw --filter`。
+
+### change 参数说明
+
+`change` 子命令对**已有位图**按预设档位做自动亮度 / 对比 / 饱和调整，目标是"看着舒服"（自然、保留肤色与高光、不出现 neon/halo 伪影），而不是"最大化对比"。
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | 输入目录 |
+| `--output` | `-o` | `<源目录>/changed` | 输出目录（保持相对路径结构） |
+| `--recursive` | `-r` | false | 是否递归处理子目录；递归扫描时自动跳过输出目录下的旧产物 |
+| `--intensity` | `-i` | `balanced` | 档位预设：`subtle` / `balanced` / `punchy` 之一 |
+| `--hdr` / `--no-hdr` | - | `--no-hdr` | 启用 HDR 局部 tone mapping（base/detail 分解 + 高光压缩 + 细节放大） |
+| `--preserve-exif` / `--no-preserve-exif` | - | `--preserve-exif` | 是否保留源图 EXIF；orientation tag 会自动清为 1，像素已实际旋转 |
+| `--quality` | `-q` | 92 | JPEG 压缩质量 (1-100) |
+| `--overwrite` / `--no-overwrite` | - | `--no-overwrite` | 是否覆盖已存在的输出文件 |
+| `--workers` | `-j` | `min(CPU核数, 4)` | 并行处理线程数，`-j 1` 表示串行 |
+
+支持的输入格式：JPG / JPEG / PNG / WebP / BMP / TIFF / HEIC / HEIF。输出统一为 JPG。
+
+#### 档位说明
+
+| 档位 | 效果强度 | 典型使用场景 |
+|------|---------|--------------|
+| `subtle` | 温和 | 本身曝光对比都不错、只想做一次轻度"加分"的片子；参数非常保守 |
+| `balanced` | 平衡（默认） | 日常照片 90% 情况下最合适；自动识别暗光分支做针对性提亮 |
+| `punchy` | 强烈 | 灰度大、对比低、压缩明显的手机直出或截图；CLAHE 与 vibrance 都更激进 |
+
+#### 算法流水线
+
+1. `sRGB → LAB`，以 L 通道（亮度）为主要处理对象
+2. **中位数亮度检测**：若 L 中位数低于档位阈值，切到 IAGCWD-style **暗光分支**（加权 CDF 反函数抬暗部），否则走 **Auto-Levels**（百分位拉伸，Limare et al. 的 Simplest Color Balance 思路）
+3. **CLAHE**：L 通道局部对比度增强，clipLimit / tileGrid 按档位取值，避免全局均衡化的"塑料感"
+4. **中位数 Gamma**：把处理后的 L 中位数贴近目标值
+5. 如果开启 `--hdr`：先对 L 做 Gaussian 低通得到 base 层，在 log-domain 压缩 base 的动态范围、再按系数放大 detail 层合成（Durand-Dorsey lite）
+6. `LAB → sRGB → HSV`，计算**肤色软 mask**（H/S/V 三维 smoothstep），做非线性 **Vibrance**（S' = S + (1-S)·boost·weight·activation，低饱和加得多、高饱和几乎不动、肤色区域 boost 打折）
+7. `HSV → RGB`，clip 回 uint8
+
+#### EXIF 处理
+
+- 默认保留源图 EXIF。orientation tag (0x0112) 会被重写为 1，因为处理前像素已按原 orientation 做了物理旋转（`ImageOps.exif_transpose`），若不清理会导致查看器再次旋转 → 双重旋转。
+- `--no-preserve-exif` 清空所有 EXIF（输出最小化）。
+
+#### 使用示例
+
+```bash
+# 当前目录 → ./changed/，默认平衡档
+qxw-image change
+
+# 强力档 + HDR，用于灰度大 / 阴天 / 室内手机直出
+qxw-image change -i punchy --hdr
+
+# 温和档 + 去 EXIF（匿名化）
+qxw-image change -i subtle --no-preserve-exif
+
+# 高质量 + 多线程 + 覆盖旧产物
+qxw-image change -q 95 -j 8 --overwrite
+```
+
+> 不支持 RAW 输入。若需要对 RAW 做"解码 + 自动增强"，当前做法是先跑 `qxw-image raw` 解码成 JPG，再跑 `qxw-image change`。
 
 ### svg 参数说明
 

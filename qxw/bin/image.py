@@ -10,6 +10,8 @@
     qxw-image svg                         # 将当前目录 SVG 文件批量转换为 PNG
     qxw-image filter -n fuji-cc -d imgs   # 对已有位图（JPG/PNG/TIFF/HEIC 等）批量套用调色滤镜
     qxw-image filter --list               # 列出所有已注册的调色滤镜
+    qxw-image change -d imgs              # 自动亮度/对比/饱和调整，输出更"舒服"的观感
+    qxw-image change -d imgs --hdr -i punchy  # 开启 HDR 局部 tone mapping + 强力档
     qxw-image --help                      # 查看帮助
 """
 
@@ -726,6 +728,232 @@ def filter_command(
 
     except click.UsageError:
         raise  # 交给 click 做格式化输出
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(
+    name="change",
+    help="对已有位图做自动亮度/对比/饱和调整（可选 HDR 观感）",
+)
+@click.option("--dir", "-d", "directory", default=".", show_default=True, help="输入目录")
+@click.option("--output", "-o", "output_dir", default=None, help="输出目录（默认 <源目录>/changed）")
+@click.option("--recursive", "-r", is_flag=True, default=False, help="递归处理子目录")
+@click.option(
+    "--intensity",
+    "-i",
+    type=click.Choice(["subtle", "balanced", "punchy"], case_sensitive=False),
+    default="balanced",
+    show_default=True,
+    help="档位预设：subtle 温和 / balanced 平衡 / punchy 强烈",
+)
+@click.option(
+    "--hdr/--no-hdr",
+    default=False,
+    show_default=True,
+    help="启用 HDR 局部 tone mapping（base/detail 分解 + 高光压缩 + 细节放大）",
+)
+@click.option(
+    "--preserve-exif/--no-preserve-exif",
+    default=True,
+    show_default=True,
+    help="是否保留源图 EXIF（orientation tag 会自动清为 1，像素已实际旋转）",
+)
+@click.option(
+    "--quality",
+    "-q",
+    default=92,
+    show_default=True,
+    type=click.IntRange(1, 100),
+    help="JPEG 压缩质量 (1-100)",
+)
+@click.option(
+    "--overwrite/--no-overwrite",
+    default=False,
+    show_default=True,
+    help="是否覆盖已存在的输出文件",
+)
+@click.option(
+    "--workers",
+    "-j",
+    default=None,
+    type=int,
+    help="并行处理线程数（默认 min(CPU 核数, 4)；-j 1 表示串行）",
+)
+def change_command(
+    directory: str,
+    output_dir: str | None,
+    recursive: bool,
+    intensity: str,
+    hdr: bool,
+    preserve_exif: bool,
+    quality: int,
+    overwrite: bool,
+    workers: int | None,
+) -> None:
+    """对已有位图做自动亮度/对比/饱和调整
+
+    采用 :mod:`qxw.library.services.auto_enhance` 的算法：
+
+    \b
+    核心流程：
+      1. sRGB → LAB
+      2. 暗光照片走 IAGCWD-style 自适应 gamma；
+         正常照片走 auto-levels（百分位拉伸）+ CLAHE（局部对比度）+ 中位数 gamma
+      3. HDR 开启时额外做 base/detail 分解 + 高光压缩 + 细节放大
+      4. LAB → sRGB → HSV，肤色区域 vibrance 打折后做饱和提升
+      5. 回 RGB 并编码为 JPEG
+
+    \b
+    档位说明：
+      subtle    参数保守，输出接近原图，适合本身已经不错只想微调
+      balanced  默认档，日常照片 90% 情况最合适
+      punchy    参数激进，细节 / 饱和 / 对比都更强，适合压缩明显或灰度大的图
+
+    \b
+    支持格式：
+      JPG, PNG, WebP, BMP, TIFF, HEIC, HEIF
+
+    \b
+    示例:
+        qxw-image change                                 # 当前目录 → ./changed/
+        qxw-image change -d ~/Photos -r                  # 递归处理子目录
+        qxw-image change -i punchy --hdr                 # 强力档 + HDR
+        qxw-image change -i subtle --no-preserve-exif    # 温和档 + 去 EXIF
+        qxw-image change -q 95 -j 8 --overwrite          # 高质量 + 8 线程 + 覆盖
+    """
+    try:
+        _require_pillow()
+
+        from qxw.library.services.auto_enhance import AVAILABLE_INTENSITIES
+        from qxw.library.services.image_service import (
+            auto_enhance_image,
+            scan_filterable_images,
+        )
+
+        intensity_norm = intensity.strip().lower()
+        if intensity_norm not in AVAILABLE_INTENSITIES:
+            raise click.BadParameter(
+                f"未知的 intensity: {intensity!r}。可选: {', '.join(AVAILABLE_INTENSITIES)}",
+                param_hint="--intensity",
+            )
+
+        dir_path = Path(directory).resolve()
+        if not dir_path.is_dir():
+            raise click.BadParameter(f"目录不存在: {directory}")
+
+        out_path = Path(output_dir).resolve() if output_dir else dir_path / "changed"
+
+        if workers is None:
+            workers = min(os.cpu_count() or 4, 4)
+        workers = max(1, workers)
+
+        console.print(f"✨ [bold]QXW Image Auto-Enhance[/] v{__version__}")
+        console.print(f"📁 源目录: [cyan]{dir_path}[/]")
+        console.print(f"📂 输出目录: [cyan]{out_path}[/]")
+        console.print(f"🎚️  档位: [magenta]{intensity_norm}[/]")
+        console.print(f"🌄 HDR: {'开启' if hdr else '关闭'}")
+        console.print(f"🏷️  EXIF: {'保留' if preserve_exif else '丢弃'}")
+        console.print(f"📊 JPEG 质量: {quality}")
+        console.print(f"🧵 并行线程: {workers}")
+        console.print()
+
+        image_files = scan_filterable_images(dir_path, recursive=recursive)
+        if not image_files:
+            console.print("📭 未找到可增强的位图文件")
+            return
+
+        console.print(f"🔍 找到 [bold]{len(image_files)}[/] 个位图文件\n")
+
+        tasks: list[tuple[Path, Path]] = []
+        skip_count = 0
+        out_resolved = out_path.resolve()
+        for src in image_files:
+            # 递归扫描时跳过输出目录里的旧产物（避免把增强叠加到自己身上）
+            try:
+                src.resolve().relative_to(out_resolved)
+                skip_count += 1
+                continue
+            except ValueError:
+                pass
+
+            rel_dir = src.relative_to(dir_path).parent
+            dst = out_path / rel_dir / f"{src.stem}.jpg"
+            if dst.exists() and not overwrite:
+                skip_count += 1
+                continue
+            tasks.append((src, dst))
+
+        success_count = 0
+        fail_count = 0
+
+        def _run_one(item: tuple[Path, Path]) -> tuple[Path, Exception | None]:
+            src, dst = item
+            try:
+                auto_enhance_image(
+                    src,
+                    dst,
+                    intensity=intensity_norm,
+                    hdr=hdr,
+                    quality=quality,
+                    preserve_exif=preserve_exif,
+                )
+                return src, None
+            except Exception as e:
+                return src, e
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("增强中...", total=len(image_files))
+            if skip_count:
+                progress.advance(task_id, skip_count)
+
+            if workers == 1 or len(tasks) <= 1:
+                for item in tasks:
+                    src, err = _run_one(item)
+                    if err is None:
+                        success_count += 1
+                    else:
+                        logger.warning("增强失败 %s: %s", src.name, err)
+                        fail_count += 1
+                    progress.advance(task_id)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [pool.submit(_run_one, item) for item in tasks]
+                    for future in as_completed(futures):
+                        src, err = future.result()
+                        if err is None:
+                            success_count += 1
+                        else:
+                            logger.warning("增强失败 %s: %s", src.name, err)
+                            fail_count += 1
+                        progress.advance(task_id)
+
+        console.print()
+        console.print(f"✅ 增强完成: [green]{success_count}[/] 成功", end="")
+        if skip_count:
+            console.print(f"，[yellow]{skip_count}[/] 跳过（已存在或输出即自身）", end="")
+        if fail_count:
+            console.print(f"，[red]{fail_count}[/] 失败", end="")
+        console.print()
+
+    except click.UsageError:
+        raise
     except QxwError as e:
         logger.error("命令执行失败: %s", e.message)
         click.echo(f"错误: {e.message}", err=True)
