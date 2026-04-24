@@ -574,7 +574,7 @@ qxw-image change -d ~/Photos/exports -i balanced
 | `--output` | `-o` | `<源目录>/changed` | 输出目录（保持相对路径结构） |
 | `--recursive` | `-r` | false | 是否递归处理子目录；递归扫描时自动跳过输出目录下的旧产物 |
 | `--intensity` | `-i` | `balanced` | 档位预设：`subtle` / `balanced` / `punchy` 之一 |
-| `--hdr` / `--no-hdr` | - | `--no-hdr` | 启用 HDR 局部 tone mapping（base/detail 分解 + 高光压缩 + 细节放大） |
+| `--hdr` / `--no-hdr` | - | `--hdr` | 启用 HDR 局部 tone mapping（base/detail 分解 + 高光压缩 + 细节放大）；**默认开启**，若不想要 HDR 观感传 `--no-hdr` |
 | `--preserve-exif` / `--no-preserve-exif` | - | `--preserve-exif` | 是否保留源图 EXIF；orientation tag 会自动清为 1，像素已实际旋转 |
 | `--quality` | `-q` | 92 | JPEG 压缩质量 (1-100) |
 | `--overwrite` / `--no-overwrite` | - | `--no-overwrite` | 是否覆盖已存在的输出文件 |
@@ -608,11 +608,14 @@ qxw-image change -d ~/Photos/exports -i balanced
 #### 使用示例
 
 ```bash
-# 当前目录 → ./changed/，默认平衡档
+# 当前目录 → ./changed/，默认平衡档 + HDR 默认开启
 qxw-image change
 
-# 强力档 + HDR，用于灰度大 / 阴天 / 室内手机直出
-qxw-image change -i punchy --hdr
+# 强力档（HDR 仍默认开启），用于灰度大 / 阴天 / 室内手机直出
+qxw-image change -i punchy
+
+# 关闭 HDR，走纯"自动亮度对比饱和"流水线（更保守）
+qxw-image change --no-hdr
 
 # 温和档 + 去 EXIF（匿名化）
 qxw-image change -i subtle --no-preserve-exif

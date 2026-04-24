@@ -201,6 +201,46 @@ class TestInternalInvariants:
         out = ae._median_gamma(l_channel, target_median=0.5)
         assert np.all(np.isfinite(out))
 
+    def test_median_gamma_护栏_中位数够好就跳过(self) -> None:
+        # 中位数 52，target 50，tolerance 8 → 落在 [42, 58] 内，应原样返回
+        rng = np.random.default_rng(21)
+        l = rng.uniform(40.0, 64.0, (20, 20)).astype(np.float32)
+        # 人为把中位数钉到 52
+        l = l + (52.0 - float(np.median(l)))
+        out = ae._median_gamma(l, target_median=0.50, tolerance=0.08)
+        assert np.allclose(out, l)
+
+    def test_median_gamma_超出护栏会介入(self) -> None:
+        # 中位数 70，target 50，tolerance 5 → 差 20，必须介入
+        rng = np.random.default_rng(22)
+        l = rng.uniform(60.0, 80.0, (20, 20)).astype(np.float32)
+        l = l + (70.0 - float(np.median(l)))
+        out = ae._median_gamma(l, target_median=0.50, tolerance=0.05)
+        # 介入后中位数应向 50 靠近
+        assert float(np.median(out)) < 70.0
+
+    def test_median_gamma_clip_防极端(self) -> None:
+        # 中位数 5，target 50 → gamma 会变成非常小的值；必须 clip 到 >= 0.7
+        rng = np.random.default_rng(23)
+        l = rng.uniform(2.0, 8.0, (20, 20)).astype(np.float32)
+        out = ae._median_gamma(l, target_median=0.50, tolerance=0.05)
+        # clip 到 0.7 后，极暗图 gamma 提亮非常有限（不会完全变亮）
+        assert float(np.median(out)) < 50.0  # 因为 gamma 被限，达不到 target
+
+    def test_clahe_strength_0_auto_enhance_不走_CLAHE(self) -> None:
+        # subtle 档位 clahe_strength=0，且图像本身已覆盖全 tonal 范围 → 不会触发激进变换
+        assert ae.INTENSITY_PRESETS["subtle"]["clahe_strength"] == 0.0
+        rng = np.random.default_rng(31)
+        arr = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        out = ae.auto_enhance(arr, intensity="subtle", hdr=False)
+        # 对比 balanced / punchy 档，subtle 的像素改动应显著更小
+        out_bal = ae.auto_enhance(arr, intensity="balanced", hdr=False)
+        d_subtle = float(np.abs(out.astype(int) - arr.astype(int)).mean())
+        d_balanced = float(np.abs(out_bal.astype(int) - arr.astype(int)).mean())
+        assert d_subtle < d_balanced, (
+            f"subtle 档应比 balanced 改动小: subtle={d_subtle}, balanced={d_balanced}"
+        )
+
     def test_HSV_往返_高保真(self) -> None:
         rng = np.random.default_rng(11)
         rgb = rng.uniform(0.0, 1.0, (20, 20, 3)).astype(np.float32)
@@ -273,9 +313,12 @@ class TestPresetConsistency:
             "auto_levels_high_pct",
             "clahe_clip_limit",
             "clahe_tile_grid",
+            "clahe_strength",
             "gamma_target_median",
+            "gamma_tolerance",
             "vibrance_boost",
             "hdr_detail_boost",
+            "hdr_compression",
             "low_light_threshold",
             "skin_vibrance_damp",
         }
@@ -283,7 +326,17 @@ class TestPresetConsistency:
             assert set(preset.keys()) == required, f"{name} 档位字段不完整"
 
     def test_预设档位力度递增(self) -> None:
-        # vibrance / clahe 强度应按 subtle < balanced < punchy 排序
-        for key in ("vibrance_boost", "clahe_clip_limit", "hdr_detail_boost"):
+        # vibrance / clahe 强度 / hdr 细节放大应按 subtle < balanced < punchy 排序
+        for key in ("vibrance_boost", "clahe_strength", "hdr_detail_boost"):
             v = [ae.INTENSITY_PRESETS[k][key] for k in ("subtle", "balanced", "punchy")]
             assert v[0] < v[1] < v[2], f"{key} 应递增: {v}"
+
+    def test_hdr_compression_档位递减(self) -> None:
+        # hdr_compression 越小压得越狠；subtle 最温和（最大值），punchy 最激进（最小值）
+        v = [ae.INTENSITY_PRESETS[k]["hdr_compression"] for k in ("subtle", "balanced", "punchy")]
+        assert v[0] > v[1] > v[2], f"hdr_compression 应递减: {v}"
+
+    def test_gamma_tolerance_档位递减(self) -> None:
+        # gamma_tolerance 越大越不爱介入；subtle 最懒 → 最大
+        v = [ae.INTENSITY_PRESETS[k]["gamma_tolerance"] for k in ("subtle", "balanced", "punchy")]
+        assert v[0] > v[1] > v[2], f"gamma_tolerance 应递减: {v}"

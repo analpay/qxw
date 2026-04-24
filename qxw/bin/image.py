@@ -10,8 +10,8 @@
     qxw-image svg                         # 将当前目录 SVG 文件批量转换为 PNG
     qxw-image filter -n fuji-cc -d imgs   # 对已有位图（JPG/PNG/TIFF/HEIC 等）批量套用调色滤镜
     qxw-image filter --list               # 列出所有已注册的调色滤镜
-    qxw-image change -d imgs              # 自动亮度/对比/饱和调整，输出更"舒服"的观感
-    qxw-image change -d imgs --hdr -i punchy  # 开启 HDR 局部 tone mapping + 强力档
+    qxw-image change -d imgs              # 自动亮度/对比/饱和调整 + HDR 观感（HDR 默认开启）
+    qxw-image change -d imgs --no-hdr     # 关闭 HDR 局部 tone mapping
     qxw-image --help                      # 查看帮助
 """
 
@@ -758,9 +758,9 @@ def filter_command(
 )
 @click.option(
     "--hdr/--no-hdr",
-    default=False,
+    default=True,
     show_default=True,
-    help="启用 HDR 局部 tone mapping（base/detail 分解 + 高光压缩 + 细节放大）",
+    help="启用 HDR 局部 tone mapping（base/detail 分解 + 高光压缩 + 细节放大）；默认开启",
 )
 @click.option(
     "--preserve-exif/--no-preserve-exif",
@@ -825,9 +825,10 @@ def change_command(
 
     \b
     示例:
-        qxw-image change                                 # 当前目录 → ./changed/
+        qxw-image change                                 # 当前目录 → ./changed/（HDR 默认开启）
         qxw-image change -d ~/Photos -r                  # 递归处理子目录
-        qxw-image change -i punchy --hdr                 # 强力档 + HDR
+        qxw-image change -i punchy                       # 强力档 + HDR（HDR 默认开启）
+        qxw-image change --no-hdr                        # 关闭 HDR 局部 tone mapping
         qxw-image change -i subtle --no-preserve-exif    # 温和档 + 去 EXIF
         qxw-image change -q 95 -j 8 --overwrite          # 高质量 + 8 线程 + 覆盖
     """

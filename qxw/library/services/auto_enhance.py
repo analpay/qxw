@@ -48,41 +48,59 @@ logger = get_logger("qxw.image.auto_enhance")
 # ============================================================
 
 # 三档预设：每项都是一组相互协调的参数，不要单独调任何一项，否则容易失衡
+#
+# 【设计原则】先前版本过激（subtle 档平均每像素变化 22/255），修订为：
+# - subtle：几乎肉眼不可察，除去非常极端的照片外输出接近原图
+# - balanced：日常 90% 场景合适；曝光正常的图 gamma 直接跳过，避免不必要提亮
+# - punchy：明显但不 "假"；适合低对比 / 阴天 / 手机直出
 INTENSITY_PRESETS: dict[str, dict[str, float]] = {
     "subtle": {
-        "auto_levels_low_pct": 0.3,      # 裁掉最暗 0.3% 像素
-        "auto_levels_high_pct": 99.7,    # 裁掉最亮 0.3% 像素
-        "clahe_clip_limit": 1.5,         # CLAHE 直方图裁剪阈值（倍数）
-        "clahe_tile_grid": 8,            # CLAHE tile 数量（8×8）
-        "gamma_target_median": 0.50,     # L 通道中位数目标
-        "vibrance_boost": 0.08,          # 饱和提升强度
-        "hdr_detail_boost": 1.2,         # HDR 模式下 detail 层放大倍数
-        "low_light_threshold": 0.20,     # 暗光判定阈值（L 中位数 / 100）
-        "skin_vibrance_damp": 0.6,       # 肤色区域 vibrance 保留比例（越小越保护）
-    },
-    "balanced": {
-        "auto_levels_low_pct": 0.8,
-        "auto_levels_high_pct": 99.2,
+        "auto_levels_low_pct": 0.05,     # 仅裁掉 0.05% 像素（去极端异常）
+        "auto_levels_high_pct": 99.95,
         "clahe_clip_limit": 2.0,
         "clahe_tile_grid": 8,
+        "clahe_strength": 0.0,           # 完全跳过 CLAHE（保持最温和）
         "gamma_target_median": 0.50,
-        "vibrance_boost": 0.15,
-        "hdr_detail_boost": 1.4,
-        "low_light_threshold": 0.25,
+        "gamma_tolerance": 0.08,         # 中位数在 [0.42, 0.58] 内直接跳过 gamma
+        "vibrance_boost": 0.05,
+        "hdr_detail_boost": 1.05,        # HDR 几乎只做一点点 unsharp 感
+        "hdr_compression": 0.92,         # 高光压缩极弱
+        "low_light_threshold": 0.18,
+        "skin_vibrance_damp": 0.6,
+    },
+    "balanced": {
+        "auto_levels_low_pct": 0.2,
+        "auto_levels_high_pct": 99.8,
+        "clahe_clip_limit": 2.0,
+        "clahe_tile_grid": 8,
+        "clahe_strength": 0.55,          # 与原图 55% / 45% 混合
+        "gamma_target_median": 0.50,
+        "gamma_tolerance": 0.07,         # [0.43, 0.57] 跳过
+        "vibrance_boost": 0.10,
+        "hdr_detail_boost": 1.15,
+        "hdr_compression": 0.88,
+        "low_light_threshold": 0.22,
         "skin_vibrance_damp": 0.5,
     },
     "punchy": {
-        "auto_levels_low_pct": 1.5,
-        "auto_levels_high_pct": 98.5,
+        "auto_levels_low_pct": 0.6,
+        "auto_levels_high_pct": 99.4,
         "clahe_clip_limit": 3.0,
-        "clahe_tile_grid": 10,
+        "clahe_tile_grid": 8,
+        "clahe_strength": 1.0,           # 全量 CLAHE
         "gamma_target_median": 0.48,
-        "vibrance_boost": 0.25,
-        "hdr_detail_boost": 1.7,
-        "low_light_threshold": 0.30,
+        "gamma_tolerance": 0.05,         # [0.43, 0.53] 跳过
+        "vibrance_boost": 0.20,
+        "hdr_detail_boost": 1.30,
+        "hdr_compression": 0.82,
+        "low_light_threshold": 0.28,
         "skin_vibrance_damp": 0.4,
     },
 }
+
+# HDR 开启时 CLAHE clip_limit 的折扣：避免 HDR 的 detail amplification 与 CLAHE 的
+# 局部直方图裁剪叠加，产生 "过度锐化 + halo" 的伪影
+_CLAHE_DISCOUNT_WHEN_HDR = 0.7
 
 AVAILABLE_INTENSITIES: tuple[str, ...] = ("subtle", "balanced", "punchy")
 
@@ -149,11 +167,8 @@ def auto_enhance(
     lab = _srgb_to_lab(rgb_f)
     l_channel = lab[..., 0]
 
-    # HDR 分支：先做局部 tone mapping 再走后续流程
-    if hdr:
-        l_channel = _hdr_local_tonemap(l_channel, float(params["hdr_detail_boost"]))
-
-    # 暗光分支 vs 正常分支
+    # ===== 流水线（修订版）=====
+    # 1) 暗光 / 正常分支 —— 全局 tone 先落到合理范围
     l_median_norm = float(np.median(l_channel)) / 100.0
     if l_median_norm < float(params["low_light_threshold"]):
         logger.debug("auto_enhance: 暗光分支触发 (median=%.3f)", l_median_norm)
@@ -165,15 +180,38 @@ def auto_enhance(
             float(params["auto_levels_high_pct"]),
         )
 
-    # CLAHE 局部对比增强
-    l_channel = _numpy_clahe(
-        l_channel,
-        clip_limit=float(params["clahe_clip_limit"]),
-        tile_grid=int(params["clahe_tile_grid"]),
-    )
+    # 2) HDR 局部 tone mapping（在 auto-levels 之后才做，否则紧接着的 auto-levels
+    #    会把 HDR 的高光压缩重新拉回，做白工还放大 detail 造成 halo）
+    if hdr:
+        l_channel = _hdr_local_tonemap(
+            l_channel,
+            detail_boost=float(params["hdr_detail_boost"]),
+            compression=float(params["hdr_compression"]),
+        )
 
-    # 中位数 gamma 校正到目标
-    l_channel = _median_gamma(l_channel, float(params["gamma_target_median"]))
+    # 3) CLAHE 局部对比增强。
+    #    - 强度 clahe_strength ∈ [0, 1] 线性 blend 原图与 CLAHE 输出，0 = 跳过
+    #    - HDR 已经做了 detail amplification 时把 strength 打折，避免"HDR 锐化 +
+    #      CLAHE 提升"叠加出过锐 / halo
+    clahe_strength = float(params["clahe_strength"])
+    if hdr:
+        clahe_strength *= _CLAHE_DISCOUNT_WHEN_HDR
+    if clahe_strength > 1e-3:
+        clahe_out = _numpy_clahe(
+            l_channel,
+            clip_limit=float(params["clahe_clip_limit"]),
+            tile_grid=int(params["clahe_tile_grid"]),
+        )
+        l_channel = (
+            l_channel * (1.0 - clahe_strength) + clahe_out * clahe_strength
+        ).astype(np.float32)
+
+    # 4) 中位数 gamma 校正（带护栏）：只有当中位亮度偏离目标超过 tolerance 才介入
+    l_channel = _median_gamma(
+        l_channel,
+        target_median=float(params["gamma_target_median"]),
+        tolerance=float(params["gamma_tolerance"]),
+    )
 
     lab[..., 0] = l_channel
     rgb_f2 = _lab_to_srgb(lab)
@@ -402,8 +440,21 @@ def _auto_levels(l_channel: "np.ndarray", low_pct: float, high_pct: float) -> "n
 # ============================================================
 
 
-def _median_gamma(l_channel: "np.ndarray", target_median: float) -> "np.ndarray":
-    """调整 gamma 使 L 通道中位数贴近 target_median × 100"""
+def _median_gamma(
+    l_channel: "np.ndarray",
+    target_median: float,
+    tolerance: float = 0.07,
+) -> "np.ndarray":
+    """调整 gamma 使 L 通道中位数贴近 target_median × 100
+
+    增加了 **护栏**：若当前中位数已在 ``target_median ± tolerance`` 内，直接短路。
+    这是针对"正常曝光图被强行拉到 50%"造成的过曝 / 发灰问题的关键修复。
+
+    Args:
+        l_channel: L 通道值域 [0, 100] 的 float32 数组
+        target_median: 目标中位数（归一化，0-1）
+        tolerance: 中位数偏离目标多少时才介入（归一化，默认 ±7%）
+    """
     import numpy as np
 
     # 归一化到 [0, 1] 再做 gamma，之后还原
@@ -412,9 +463,13 @@ def _median_gamma(l_channel: "np.ndarray", target_median: float) -> "np.ndarray"
     if median < 1e-3 or median > 1.0 - 1e-3:
         return l_channel  # 饱和区间内 gamma 无意义，短路
     target = float(np.clip(target_median, 0.05, 0.95))
+    # 护栏：中位数已"够好"就不介入
+    if abs(median - target) <= float(tolerance):
+        return l_channel
     # γ 满足 median ** γ = target → γ = log(target)/log(median)
     gamma = float(np.log(target) / np.log(median))
-    gamma = float(np.clip(gamma, 0.4, 2.5))  # 防极端
+    # 收紧到 [0.7, 1.4]，避免极端 gamma 造成严重色调失真
+    gamma = float(np.clip(gamma, 0.7, 1.4))
     adjusted = np.power(l_norm, gamma) * 100.0
     return adjusted.astype(np.float32)
 
@@ -575,12 +630,20 @@ def _numpy_clahe(
 # ============================================================
 
 
-def _hdr_local_tonemap(l_channel: "np.ndarray", detail_boost: float) -> "np.ndarray":
+def _hdr_local_tonemap(
+    l_channel: "np.ndarray",
+    detail_boost: float,
+    compression: float = 0.85,
+) -> "np.ndarray":
     """Durand-Dorsey lite：base / detail 分解 + 高光压缩 + 细节放大
 
-    对 L 通道做 Gaussian 低通得到 base 层（大尺度亮度），用 log-domain arctan
-    压缩 base 的动态范围，然后把 detail 层（原图 - base）按 detail_boost 放大
-    再合成。这是 HDR 观感的最小可工作实现，不需要真正的多曝光融合。
+    对 L 通道做 Gaussian 低通得到 base 层（大尺度亮度），用 log-domain 压缩 base
+    的动态范围，然后把 detail 层（原图 - base）按 detail_boost 放大再合成。
+
+    Args:
+        l_channel: L 通道 float32，值域 [0, 100]
+        detail_boost: detail 层放大倍数（1.0 = 不放大；> 1.0 会出 unsharp 感）
+        compression: base 层动态范围压缩系数（1.0 = 不压缩；越小压得越狠）
     """
     import numpy as np
 
@@ -593,9 +656,7 @@ def _hdr_local_tonemap(l_channel: "np.ndarray", detail_boost: float) -> "np.ndar
     base_safe = np.maximum(base, 1e-3)
     # 参考值：整图 log 均值
     log_mean = float(np.mean(np.log(base_safe)))
-    # 压缩系数：0.6 相当于动态范围压到原来的 60%
-    compression = 0.7
-    log_compressed = log_mean + (np.log(base_safe) - log_mean) * compression
+    log_compressed = log_mean + (np.log(base_safe) - log_mean) * float(compression)
     base_compressed = np.exp(log_compressed)
 
     # detail 层 = 原 - base（在 L 域直接相减）
