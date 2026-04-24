@@ -221,6 +221,258 @@ class TestServeThumbnailSuccess:
         assert h.wfile.getvalue() == b"T"
 
 
+class TestServeAdjust:
+    """/adjust/<path>?... 路由：调整预览"""
+
+    def _cfg(self, tmp_path: Path) -> ImageServerConfig:
+        return ImageServerConfig(directory=tmp_path, host="127.0.0.1", port=0)
+
+    def test_文件不存在_404(self, tmp_path: Path) -> None:
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/nope.jpg?exposure=10"
+        h.do_GET()
+        assert 404 in h._codes
+
+    def test_路径穿越_404(self, tmp_path: Path) -> None:
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/../secret?exposure=10"
+        h.do_GET()
+        assert 404 in h._codes
+
+    def test_非法参数值_400(self, tmp_path: Path) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/a.jpg?exposure=abc"
+        # 让 get_viewable_path 以为找得到，只跑到参数解析就退出
+        h.do_GET()
+        assert 400 in h._codes
+
+    def test_越界参数_400(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/a.jpg?exposure=500"
+        h.do_GET()
+        assert 400 in h._codes
+
+    def test_未知参数_400(self, tmp_path: Path) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/a.jpg?nope=10"
+        h.do_GET()
+        assert 400 in h._codes
+
+    def test_viewable_返回_None_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        import qxw.library.services.image_service as isvc_mod
+
+        monkeypatch.setattr(isvc_mod, "get_viewable_path", lambda *a, **k: None)
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/a.jpg?exposure=10"
+        h.do_GET()
+        assert 500 in h._codes
+
+    def test_预览底图缺失_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # PIL 已安装，但强制让 _get_preview_base 返回 None 触发 500
+        jpg = tmp_path / "a.jpg"
+        jpg.write_bytes(b"x")
+        import qxw.library.services.image_service as isvc_mod
+        import qxw.library.services.serve_image as si_mod
+
+        monkeypatch.setattr(isvc_mod, "get_viewable_path", lambda *a, **k: jpg)
+        monkeypatch.setattr(si_mod, "_get_preview_base", lambda *a, **k: None)
+
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/a.jpg?exposure=10"
+        h.do_GET()
+        assert 500 in h._codes
+
+    def test_端到端_返回_JPEG(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 用一张真 JPG（PIL 生成）触发 apply_adjustments 全链路
+        pil = pytest.importorskip("PIL.Image")
+        import numpy as np
+
+        img_arr = np.zeros((32, 32, 3), dtype=np.uint8)
+        img_arr[..., 0] = 200  # 红底
+        jpg = tmp_path / "a.jpg"
+        pil.fromarray(img_arr).save(str(jpg), "JPEG", quality=80)
+
+        # 清缓存避免上一条用例污染
+        import qxw.library.services.serve_image as si_mod
+
+        si_mod._PREVIEW_CACHE["key"] = None
+        si_mod._PREVIEW_CACHE["ndarray"] = None
+        si_mod._PREVIEW_CACHE["mtime"] = None
+
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/adjust/a.jpg?exposure=30&saturation=-100"
+        h.do_GET()
+        assert 200 in h._codes
+        body = h.wfile.getvalue()
+        # JPEG SOI 魔数
+        assert body[:2] == b"\xff\xd8"
+
+
+class TestServeSave:
+    """POST /save/<path>?... 路由：原尺寸保存"""
+
+    def _cfg(self, tmp_path: Path) -> ImageServerConfig:
+        return ImageServerConfig(directory=tmp_path, host="127.0.0.1", port=0)
+
+    def test_GET_到_save_路径_404(self, tmp_path: Path) -> None:
+        h = _H(self._cfg(tmp_path), [])
+        # do_GET 不路由 /save
+        h.path = "/save/a.jpg?exposure=10"
+        h.do_GET()
+        assert 404 in h._codes
+
+    def test_POST_文件不存在_404(self, tmp_path: Path) -> None:
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/nope.jpg?exposure=10"
+        h.do_POST()
+        assert 404 in h._codes
+
+    def test_POST_路径穿越_404(self, tmp_path: Path) -> None:
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/../secret?exposure=10"
+        h.do_POST()
+        assert 404 in h._codes
+
+    def test_POST_未知路径_404(self, tmp_path: Path) -> None:
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/api/unknown"
+        h.do_POST()
+        assert 404 in h._codes
+
+    def test_POST_非法参数_400(self, tmp_path: Path) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/a.jpg?exposure=abc"
+        h.do_POST()
+        assert 400 in h._codes
+
+    def test_POST_越界参数_400(self, tmp_path: Path) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/a.jpg?exposure=999"
+        h.do_POST()
+        assert 400 in h._codes
+
+    def test_POST_无调整_400(self, tmp_path: Path) -> None:
+        # is_identity() 被服务端拦下
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/a.jpg"  # 无 query
+        h.do_POST()
+        assert 400 in h._codes
+        body = h.wfile.getvalue().decode("utf-8")
+        assert "未设置任何调整" in body
+
+    def test_POST_viewable_None_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        import qxw.library.services.image_service as isvc_mod
+
+        monkeypatch.setattr(isvc_mod, "get_viewable_path", lambda *a, **k: None)
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/a.jpg?exposure=10"
+        h.do_POST()
+        assert 500 in h._codes
+
+    def test_POST_save_adjusted_image_抛_QxwError_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        import qxw.library.services.image_adjust as ia_mod
+        import qxw.library.services.image_service as isvc_mod
+
+        monkeypatch.setattr(isvc_mod, "get_viewable_path", lambda *a, **k: tmp_path / "a.jpg")
+
+        def boom(*a, **k):
+            from qxw.library.base.exceptions import QxwError as QE
+            raise QE("磁盘满", exit_code=5)
+
+        monkeypatch.setattr(ia_mod, "save_adjusted_image", boom)
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/a.jpg?exposure=10"
+        h.do_POST()
+        assert 500 in h._codes
+        body = h.wfile.getvalue().decode("utf-8")
+        assert "磁盘满" in body
+
+    def test_POST_意外_Exception_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        import qxw.library.services.image_adjust as ia_mod
+        import qxw.library.services.image_service as isvc_mod
+
+        monkeypatch.setattr(isvc_mod, "get_viewable_path", lambda *a, **k: tmp_path / "a.jpg")
+        monkeypatch.setattr(ia_mod, "save_adjusted_image",
+                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("oops")))
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/a.jpg?exposure=10"
+        h.do_POST()
+        assert 500 in h._codes
+
+    def test_POST_端到端_写出原尺寸_JPG(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pil = pytest.importorskip("PIL.Image")
+        import json as _json
+
+        pil.new("RGB", (120, 80), (128, 64, 200)).save(str(tmp_path / "a.jpg"), "JPEG", quality=90)
+
+        h = _H(self._cfg(tmp_path), [])
+        h.path = "/save/a.jpg?exposure=25&contrast=10"
+        h.do_POST()
+        assert 200 in h._codes
+        body = h.wfile.getvalue().decode("utf-8")
+        payload = _json.loads(body)
+        saved = tmp_path / payload["path"]
+        assert saved.exists()
+        assert saved.suffix == ".jpg"
+        assert "_adjusted_" in saved.name
+        # 保留原尺寸
+        with pil.open(saved) as im:
+            assert im.size == (120, 80)
+
+
+class TestPreviewCache:
+    def test_mtime_变化_触发重解码(self, tmp_path: Path) -> None:
+        pil = pytest.importorskip("PIL.Image")
+        import numpy as np
+
+        import qxw.library.services.serve_image as si_mod
+
+        jpg = tmp_path / "a.jpg"
+        pil.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(str(jpg), "JPEG")
+        si_mod._PREVIEW_CACHE["key"] = None
+
+        a = si_mod._get_preview_base(jpg, "k", max_side=1200)
+        assert a is not None
+        # 再次请求相同 mtime 命中缓存
+        b = si_mod._get_preview_base(jpg, "k", max_side=1200)
+        assert b is a
+
+    def test_文件打开失败_返回_None(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import qxw.library.services.serve_image as si_mod
+
+        # stat 失败模拟磁盘错误
+        bad = tmp_path / "ghost.jpg"
+        # 文件不存在 → stat 抛 OSError → 返回 None
+        result = si_mod._get_preview_base(bad, "k", max_side=1200)
+        assert result is None
+
+
 class TestStartServer:
     def test_HTTPServer_被调用(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

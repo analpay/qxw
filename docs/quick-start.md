@@ -143,9 +143,12 @@ qxw-serve webtool -p 3000
 # HTTP 文件共享（Basic Auth，密码不指定时启动时自动生成并打印）
 qxw-serve file-web -d ~/Downloads
 
-# 图片画廊（缩略图 + 灯箱 + Live Photo + RAW 预览）
+# 图片画廊（缩略图 + 灯箱 + Live Photo + RAW 预览 + 灯箱内 15 档参数调整预览）
 pip install "qxw[image]"
 qxw-serve image-web -d ~/Photos
+# 打开任意图片后点击 "🎚 调整" 展开：曝光 / 鲜明度 / 高光 / 阴影 / 对比度 / 亮度 / 黑点
+# / 饱和度 / 自然饱和度 / 色温 / 色调 / 锐度 / 清晰度 / 噪点消除 / 晕影
+# 满意后点击 "💾 保存原尺寸" → 源目录下生成 <原名>_adjusted_<时间戳>.jpg
 ```
 
 > `qxw-serve gitbook` 的"下载本页 PDF / 下载整本 PDF"按钮依赖 `weasyprint`。若未安装，预览依然可用，仅 PDF 下载会返回错误并提示：
