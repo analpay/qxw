@@ -82,7 +82,14 @@ def main(ctx: click.Context) -> None:
 @click.option("--dir", "-d", "directory", default=".", show_default=True, help="RAW 文件所在目录")
 @click.option("--output", "-o", "output_dir", default=None, help="输出目录（默认写入源目录下的 jpg/ 子目录）")
 @click.option("--recursive", "-r", is_flag=True, default=False, help="递归处理子目录")
-@click.option("--quality", "-q", default=92, show_default=True, type=int, help="JPEG 压缩质量 (1-100)")
+@click.option(
+    "--quality",
+    "-q",
+    default=92,
+    show_default=True,
+    type=click.IntRange(1, 100),
+    help="JPEG 压缩质量 (1-100)",
+)
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True, help="是否覆盖已存在的输出文件")
 @click.option(
     "--use-embedded/--no-use-embedded",
@@ -516,7 +523,14 @@ def svg_command(
     default=None,
     help="调色滤镜名（必填，除非用 --list）。可用名见 --list，可通过 register_filter 扩展。",
 )
-@click.option("--quality", "-q", default=92, show_default=True, type=int, help="JPEG 压缩质量 (1-100)")
+@click.option(
+    "--quality",
+    "-q",
+    default=92,
+    show_default=True,
+    type=click.IntRange(1, 100),
+    help="JPEG 压缩质量 (1-100)",
+)
 @click.option(
     "--overwrite/--no-overwrite",
     default=False,

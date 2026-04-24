@@ -94,6 +94,28 @@ class TestPreparePlantumlSource:
         src = _prepare_plantuml_source("A -> B", background=bg, font_name="X")
         assert f"skinparam backgroundColor {bg}" in src
 
+    @pytest.mark.parametrize("bad_font", [
+        '" \nskinparam malicious true\n"',   # 注入新 skinparam
+        'Font"; system("rm -rf /")',         # 注入带引号
+        "Name\nwith\nnewline",               # 换行
+        "has<tag>",                          # 非允许字符
+        "",                                  # 空
+        "   ",                               # 仅空白
+    ])
+    def test_非法字体名被拒绝(self, bad_font: str) -> None:
+        with pytest.raises(QxwError, match="字体名"):
+            _prepare_plantuml_source("A -> B", background="white", font_name=bad_font)
+
+    @pytest.mark.parametrize("ok_font", [
+        "PingFang SC",
+        "Noto Sans CJK SC",
+        "Arial",
+        "DejaVu_Sans-Mono.Bold",
+    ])
+    def test_合法字体名可通过(self, ok_font: str) -> None:
+        src = _prepare_plantuml_source("A -> B", background="white", font_name=ok_font)
+        assert f'skinparam defaultFontName "{ok_font}"' in src
+
 
 class TestInjectSvgBackgroundRect:
     def test_普通_SVG_会插入_rect(self) -> None:

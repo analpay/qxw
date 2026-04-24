@@ -250,8 +250,21 @@ def file_web_command(directory: str, port: int, host: str, username: str, passwo
 @click.option("--dir", "-d", "directory", default=".", show_default=True, help="图片目录路径")
 @click.option("--port", "-p", default=8080, show_default=True, type=int, help="服务端口")
 @click.option("--host", "-H", default="127.0.0.1", show_default=True, help="监听地址")
-@click.option("--thumb-size", "-s", default=400, show_default=True, type=int, help="缩略图尺寸（像素）")
-@click.option("--thumb-quality", default=85, show_default=True, type=int, help="缩略图 JPEG 质量 (1-100)")
+@click.option(
+    "--thumb-size",
+    "-s",
+    default=400,
+    show_default=True,
+    type=click.IntRange(50, 4096),
+    help="缩略图尺寸（像素，50-4096）",
+)
+@click.option(
+    "--thumb-quality",
+    default=85,
+    show_default=True,
+    type=click.IntRange(1, 100),
+    help="缩略图 JPEG 质量 (1-100)",
+)
 @click.option("--recursive/--no-recursive", "-r", default=True, show_default=True, help="是否递归扫描子目录")
 def image_web_command(
     directory: str,

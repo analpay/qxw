@@ -111,6 +111,16 @@ class TestRawCommand:
         assert code == 0
         assert "未找到" in out
 
+    @pytest.mark.parametrize("bad_q", ["0", "101", "-1", "200"])
+    def test_quality_超出范围被_click_拒绝(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_q: str
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        monkeypatch.setattr(image_mod, "_require_rawpy", lambda: None)
+        code, _ = _run(["raw", "-d", str(tmp_path), "-q", bad_q])
+        # IntRange 校验失败应返回非 0（click 用法错误默认 2）
+        assert code != 0
+
     def test_QxwError_透传(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         def raise_err():
             raise QxwError("自定义失败", exit_code=9)
@@ -226,6 +236,16 @@ class TestFilterCommand:
         code, out = _run(["filter", "-n", "fuji-cc", "-d", str(tmp_path)])
         assert code == 0
         assert "未找到" in out
+
+    @pytest.mark.parametrize("bad_q", ["0", "101", "-10"])
+    def test_quality_超出范围被_click_拒绝(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, bad_q: str
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        code, _ = _run([
+            "filter", "-n", "fuji-cc", "-d", str(tmp_path), "-q", bad_q,
+        ])
+        assert code != 0
 
     def test_QxwError(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def raise_err():

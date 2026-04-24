@@ -212,3 +212,17 @@ class TestImageWebCommand:
         code, _ = _run(["image-web", "-d", str(tmp_path)])
         assert code == 0
         assert captured["images"] == []
+
+    @pytest.mark.parametrize("flag,bad_value", [
+        ("-s", "0"),
+        ("-s", "10"),        # 低于 50 下限
+        ("-s", "8000"),      # 高于 4096 上限
+        ("--thumb-quality", "0"),
+        ("--thumb-quality", "101"),
+        ("--thumb-quality", "-1"),
+    ])
+    def test_缩略图参数超出范围被_click_拒绝(
+        self, tmp_path: Path, flag: str, bad_value: str
+    ) -> None:
+        code, _ = _run(["image-web", "-d", str(tmp_path), flag, bad_value])
+        assert code != 0

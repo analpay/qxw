@@ -14,6 +14,9 @@ from pathlib import Path
 
 _SUMMARY_EXCLUDED = {"readme.md", "summary.md", "index.md"}
 
+# 目录递归安全上限：防止符号链接环或恶意构造导致扫描无法终止
+_MAX_SCAN_DEPTH = 32
+
 
 @dataclass
 class _DocNode:
@@ -49,13 +52,17 @@ def _extract_title(md_path: Path) -> str:
     return md_path.stem
 
 
-def _scan_dir(dirpath: Path, rel_parts: list[str] | None = None) -> _DocNode:
+def _scan_dir(dirpath: Path, rel_parts: list[str] | None = None, depth: int = 0) -> _DocNode:
     if rel_parts is None:
         rel_parts = []
 
     readme = dirpath / "README.md"
     title = _extract_title(readme) if readme.is_file() else dirpath.name
     node = _DocNode(title=title, filepath=dirpath, rel_parts=list(rel_parts), is_page=False)
+
+    if depth >= _MAX_SCAN_DEPTH:
+        # 到达递归上限，只返回当前节点的浅层信息，防止符号链接环导致死循环
+        return node
 
     entries = sorted(dirpath.iterdir(), key=lambda e: _numeric_sort_key(e.name))
     for entry in entries:
@@ -65,11 +72,14 @@ def _scan_dir(dirpath: Path, rel_parts: list[str] | None = None) -> _DocNode:
         sub_parts = rel_parts + [entry.name]
 
         if entry.is_dir():
+            # 跳过指向目录外部或形成环的符号链接
+            if entry.is_symlink():
+                continue
             sub_readme = entry / "README.md"
             if sub_readme.is_file():
                 sub_title = _extract_title(sub_readme)
                 if "(todo)" not in sub_title:
-                    node.children.append(_scan_dir(entry, sub_parts))
+                    node.children.append(_scan_dir(entry, sub_parts, depth + 1))
         elif entry.suffix == ".md" and entry.name.lower() not in _SUMMARY_EXCLUDED:
             child_title = _extract_title(entry)
             if "(todo)" not in child_title:

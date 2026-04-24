@@ -185,6 +185,27 @@ class TestRcMarkerHelpers:
         assert comp._rc_has_marker(rc) is False
 
 
+class TestSourceLine:
+    def test_路径不含空格时使用简单形式(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", tmp_path / "completions")
+        line = comp._source_line("zsh")
+        # shlex.quote 对纯字母数字/下划线/斜杠/连字符路径不会加引号
+        assert line.startswith("source ")
+        assert "completions/qxw.zsh" in line
+
+    def test_路径含空格被引号包裹(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # 构造一个包含空格和单引号的路径，模拟 HOME 目录为 "/Users/my name's mac/..."
+        weird = tmp_path / "my name's dir" / "completions"
+        monkeypatch.setattr(comp, "COMPLETIONS_DIR", weird)
+        line = comp._source_line("bash")
+        # 单引号和空格必须被 shlex.quote 保护，否则写入 rc 后 source 命令会断词
+        assert "my name" in line
+        # shlex.quote 会整体加单引号并把内部 ' 转义成 '"'"'
+        assert "'\"'\"'" in line or '"' in line
+
+
 class TestAppendToRc:
     def test_新文件直接创建(self, tmp_path: Path) -> None:
         rc = tmp_path / ".rc"

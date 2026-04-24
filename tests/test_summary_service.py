@@ -113,6 +113,43 @@ class TestScanDir:
         node = svc._scan_dir(tmp_path)
         assert [c.filepath.name for c in node.children] == ["a.md"]
 
+    def test_符号链接目录被跳过避免环(self, tmp_path: Path) -> None:
+        # 构造一个典型的符号链接环：sub/loop -> sub（指向父目录）
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "README.md").write_text("# 子\n", encoding="utf-8")
+        (sub / "x.md").write_text("# X\n", encoding="utf-8")
+        loop = sub / "loop"
+        try:
+            loop.symlink_to(sub, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("当前文件系统不支持符号链接")
+
+        node = svc._scan_dir(tmp_path)
+        sub_node = next(c for c in node.children if c.filepath.name == "sub")
+        # 实体文件 x.md 仍被收录，但符号链接子目录被忽略，不会无限递归
+        names = [c.filepath.name for c in sub_node.children]
+        assert "x.md" in names
+        assert "loop" not in names
+
+    def test_递归深度上限保护(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 把上限压低到 3，再构造 5 层目录，确认第 4 层之后不再递归
+        monkeypatch.setattr(svc, "_MAX_SCAN_DEPTH", 3)
+        current = tmp_path
+        for i in range(5):
+            current = current / f"lvl{i}"
+            current.mkdir()
+            (current / "README.md").write_text(f"# L{i}\n", encoding="utf-8")
+
+        node = svc._scan_dir(tmp_path)
+        # 逐层下钻，统计实际递归的层数（children 非空才算递归通过）
+        depth = 0
+        cursor = node
+        while cursor.children:
+            cursor = cursor.children[0]
+            depth += 1
+        assert depth <= 3
+
 
 class TestTocMarkdown:
     def _make_node(self, children: list[svc._DocNode]) -> svc._DocNode:

@@ -108,6 +108,24 @@ def _ensure_java_and_jar(jar_path: Path, java_bin: str) -> None:
         )
 
 
+_FONT_NAME_SAFE_RE = re.compile(r"^[A-Za-z0-9 _\-.]+$")
+
+
+def _sanitize_font_name(font_name: str) -> str:
+    """校验并返回 PlantUML ``defaultFontName`` 字体名
+
+    字体名会被注入 UML 源码（``skinparam defaultFontName "<name>"``），
+    若含双引号或换行等特殊字符，可被用于提前闭合字符串并注入任意 skinparam /
+    指令。通过一个字母、数字、空格、点、横杠、下划线的白名单拦截，既覆盖
+    "PingFang SC"、"Noto Sans CJK SC" 等常见合法字体，也足够保守。
+    """
+    if not isinstance(font_name, str) or not font_name.strip():
+        raise QxwError("PlantUML 字体名不能为空")
+    if not _FONT_NAME_SAFE_RE.match(font_name):
+        raise QxwError(f"非法的 PlantUML 字体名: {font_name!r}（仅允许字母数字、空格、._-）")
+    return font_name
+
+
 def _prepare_plantuml_source(source: str, background: str, font_name: str) -> str:
     """在 PlantUML 源码里注入背景色与默认字体配置
 
@@ -115,9 +133,10 @@ def _prepare_plantuml_source(source: str, background: str, font_name: str) -> st
     - 已有 @startuml 时把 skinparam 插在 @startuml 下一行
     """
     bg_value = {"white": "white", "black": "black", "transparent": "transparent"}[background]
+    safe_font = _sanitize_font_name(font_name)
     skin_lines = [
         f"skinparam backgroundColor {bg_value}",
-        f'skinparam defaultFontName "{font_name}"',
+        f'skinparam defaultFontName "{safe_font}"',
     ]
     skin_block = "\n".join(skin_lines)
 

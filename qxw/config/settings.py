@@ -5,10 +5,14 @@
 """
 
 import json
+import logging
 from pathlib import Path
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+# 使用 logging 而非 qxw.library.base.logger，避免 settings → logger → settings 循环依赖
+_settings_logger = logging.getLogger("qxw.config.settings")
 
 
 class AppSettings(BaseSettings):
@@ -61,23 +65,33 @@ class AppSettings(BaseSettings):
 
     @model_validator(mode="after")
     def load_json_config(self) -> "AppSettings":
-        """从 ~/.config/qxw/setting.json 加载配置"""
+        """从 ~/.config/qxw/setting.json 加载配置
+
+        JSON 解析失败（格式错误）会告警但不阻塞启动，落回默认值；
+        IO 错误（权限/磁盘等）同样告警，便于用户在日志里发现配置未生效。
+        """
         json_config_path = Path.home() / ".config" / "qxw" / "setting.json"
-        if json_config_path.exists():
-            try:
-                with open(json_config_path, "r", encoding="utf-8") as f:
-                    json_config = json.load(f)
-                # 获取字段类型注解，自动进行 Path 类型转换
-                field_types = self.model_fields
-                for key, value in json_config.items():
-                    if key in field_types:
-                        annotation = field_types[key].annotation
-                        if annotation is Path and isinstance(value, str):
-                            setattr(self, key, Path(value))
-                        else:
-                            setattr(self, key, value)
-            except (json.JSONDecodeError, IOError):
-                pass
+        if not json_config_path.exists():
+            return self
+        try:
+            with open(json_config_path, "r", encoding="utf-8") as f:
+                json_config = json.load(f)
+        except json.JSONDecodeError as e:
+            _settings_logger.warning("配置文件 JSON 解析失败，已忽略 %s: %s", json_config_path, e)
+            return self
+        except OSError as e:
+            _settings_logger.warning("配置文件读取失败，已忽略 %s: %s", json_config_path, e)
+            return self
+
+        # 获取字段类型注解，自动进行 Path 类型转换
+        field_types = self.model_fields
+        for key, value in json_config.items():
+            if key in field_types:
+                annotation = field_types[key].annotation
+                if annotation is Path and isinstance(value, str):
+                    setattr(self, key, Path(value))
+                else:
+                    setattr(self, key, value)
         return self
 
 

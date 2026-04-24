@@ -117,7 +117,7 @@ def main(ctx: click.Context) -> None:
     "-q",
     default=92,
     show_default=True,
-    type=int,
+    type=click.IntRange(1, 100),
     help="JPG 压缩质量 (1-100)，仅对 --format jpg 生效",
 )
 def wx_command(

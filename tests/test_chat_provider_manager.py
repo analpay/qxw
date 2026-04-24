@@ -63,6 +63,40 @@ class TestCreate:
         a = manager.get_by_name("a")
         assert a is not None and a.is_default is False
 
+    @pytest.mark.parametrize("field,bad_value", [
+        ("name", ""),
+        ("name", "   "),
+        ("base_url", ""),
+        ("api_key", ""),
+        ("model", " "),
+    ])
+    def test_必填字符串字段为空时抛_ValidationError(
+        self, manager: ChatProviderManager, field: str, bad_value: str
+    ) -> None:
+        with pytest.raises(ValidationError, match="不能为空"):
+            _make(manager, **{field: bad_value})
+
+    @pytest.mark.parametrize("bad_temp", [-0.1, 2.1, -1.0, 5.0])
+    def test_temperature_超出范围抛_ValidationError(
+        self, manager: ChatProviderManager, bad_temp: float
+    ) -> None:
+        with pytest.raises(ValidationError, match="temperature"):
+            _make(manager, name=f"t-{bad_temp}", temperature=bad_temp)
+
+    @pytest.mark.parametrize("bad_top_p", [-0.01, 1.01, -1.0, 2.0])
+    def test_top_p_超出范围抛_ValidationError(
+        self, manager: ChatProviderManager, bad_top_p: float
+    ) -> None:
+        with pytest.raises(ValidationError, match="top_p"):
+            _make(manager, name=f"t-{bad_top_p}", top_p=bad_top_p)
+
+    @pytest.mark.parametrize("bad_tokens", [0, -1, -4096])
+    def test_max_tokens_非正抛_ValidationError(
+        self, manager: ChatProviderManager, bad_tokens: int
+    ) -> None:
+        with pytest.raises(ValidationError, match="max_tokens"):
+            _make(manager, name=f"t-{bad_tokens}", max_tokens=bad_tokens)
+
 
 class TestList:
     def test_list_all_按_id_排序(self, manager: ChatProviderManager) -> None:
@@ -132,6 +166,28 @@ class TestUpdate:
 
         assert manager.get_by_name("a").is_default is False  # type: ignore[union-attr]
         assert manager.get_by_name("b").is_default is True  # type: ignore[union-attr]
+
+    @pytest.mark.parametrize("field,bad_value", [
+        ("temperature", -0.5),
+        ("temperature", 2.5),
+        ("top_p", -0.1),
+        ("top_p", 1.5),
+        ("max_tokens", 0),
+        ("max_tokens", -100),
+    ])
+    def test_更新时参数超出范围抛_ValidationError(
+        self, manager: ChatProviderManager, field: str, bad_value: float
+    ) -> None:
+        _make(manager)
+        with pytest.raises(ValidationError, match=field):
+            manager.update("openai-main", **{field: bad_value})
+
+    def test_更新_base_url_为空字符串抛_ValidationError(
+        self, manager: ChatProviderManager
+    ) -> None:
+        _make(manager)
+        with pytest.raises(ValidationError, match="base_url"):
+            manager.update("openai-main", base_url="   ")
 
 
 class TestDelete:

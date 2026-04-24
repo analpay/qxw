@@ -10,6 +10,10 @@ from qxw.library.models.chat_provider import ChatProvider
 
 SUPPORTED_PROVIDER_TYPES = ("openai", "anthropic")
 
+# 数值参数合法区间（与主流 LLM API 约定一致）
+_TEMPERATURE_RANGE = (0.0, 2.0)
+_TOP_P_RANGE = (0.0, 1.0)
+
 
 class ChatProviderManager:
 
@@ -43,6 +47,13 @@ class ChatProviderManager:
         is_default: bool = False,
     ) -> ChatProvider:
         self._validate_provider_type(provider_type)
+        self._validate_required_str("name", name)
+        self._validate_required_str("base_url", base_url)
+        self._validate_required_str("api_key", api_key)
+        self._validate_required_str("model", model)
+        self._validate_temperature(temperature)
+        self._validate_max_tokens(max_tokens)
+        self._validate_top_p(top_p)
 
         if self.get_by_name(name):
             raise ValidationError(f"提供商 '{name}' 已存在")
@@ -65,14 +76,31 @@ class ChatProviderManager:
             )
             session.add(provider)
 
-        return self.get_by_name(name)  # type: ignore[return-value]
+        created = self.get_by_name(name)
+        if created is None:
+            raise DatabaseError(f"提供商 '{name}' 创建后回读失败")
+        return created
 
     def update(self, name: str, **kwargs: object) -> ChatProvider:
         if "provider_type" in kwargs:
             self._validate_provider_type(str(kwargs["provider_type"]))
 
         if "base_url" in kwargs and isinstance(kwargs["base_url"], str):
-            kwargs["base_url"] = kwargs["base_url"].rstrip("/")
+            stripped_url = kwargs["base_url"].strip()
+            if not stripped_url:
+                raise ValidationError("base_url 不能为空")
+            kwargs["base_url"] = stripped_url.rstrip("/")
+
+        for field_name in ("name", "api_key", "model"):
+            if field_name in kwargs and isinstance(kwargs[field_name], str):
+                self._validate_required_str(field_name, str(kwargs[field_name]))
+
+        if "temperature" in kwargs:
+            self._validate_temperature(float(kwargs["temperature"]))  # type: ignore[arg-type]
+        if "max_tokens" in kwargs:
+            self._validate_max_tokens(int(kwargs["max_tokens"]))  # type: ignore[arg-type]
+        if "top_p" in kwargs:
+            self._validate_top_p(float(kwargs["top_p"]))  # type: ignore[arg-type]
 
         with get_db_session() as session:
             stmt = select(ChatProvider).where(ChatProvider.name == name)
@@ -88,7 +116,10 @@ class ChatProviderManager:
                     setattr(provider, key, value)
             provider.updated_at = datetime.now()
 
-        return self.get_by_name(name)  # type: ignore[return-value]
+        updated = self.get_by_name(name)
+        if updated is None:
+            raise DatabaseError(f"提供商 '{name}' 更新后回读失败")
+        return updated
 
     def delete(self, name: str) -> None:
         with get_db_session() as session:
@@ -109,7 +140,10 @@ class ChatProviderManager:
             provider.is_default = True
             provider.updated_at = datetime.now()
 
-        return self.get_by_name(name)  # type: ignore[return-value]
+        updated = self.get_by_name(name)
+        if updated is None:
+            raise DatabaseError(f"提供商 '{name}' 设为默认后回读失败")
+        return updated
 
     @staticmethod
     def _clear_default(session) -> None:
@@ -123,3 +157,26 @@ class ChatProviderManager:
             raise ValidationError(
                 f"不支持的提供商类型 '{provider_type}'，支持的类型: {', '.join(SUPPORTED_PROVIDER_TYPES)}"
             )
+
+    @staticmethod
+    def _validate_required_str(field: str, value: str) -> None:
+        # 空值或仅含空白的字符串被视为缺失配置，应直接拒绝而非让其写入数据库
+        if not isinstance(value, str) or not value.strip():
+            raise ValidationError(f"{field} 不能为空")
+
+    @staticmethod
+    def _validate_temperature(value: float) -> None:
+        lo, hi = _TEMPERATURE_RANGE
+        if not (lo <= value <= hi):
+            raise ValidationError(f"temperature 必须在 [{lo}, {hi}] 范围内，当前: {value}")
+
+    @staticmethod
+    def _validate_top_p(value: float) -> None:
+        lo, hi = _TOP_P_RANGE
+        if not (lo <= value <= hi):
+            raise ValidationError(f"top_p 必须在 [{lo}, {hi}] 范围内，当前: {value}")
+
+    @staticmethod
+    def _validate_max_tokens(value: int) -> None:
+        if value <= 0:
+            raise ValidationError(f"max_tokens 必须为正整数，当前: {value}")

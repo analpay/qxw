@@ -265,16 +265,18 @@ qxw-llm provider ping-all
 
 | 参数 | 缩写 | 必填 | 默认值 | 说明 |
 |------|------|------|--------|------|
-| `--name` | `-n` | 是 | - | 提供商名称（唯一标识） |
+| `--name` | `-n` | 是 | - | 提供商名称（唯一标识，不能为空） |
 | `--type` | - | 是 | - | 提供商类型：`openai` 或 `anthropic` |
-| `--base-url` | `-u` | 是 | - | API 基础地址 |
-| `--api-key` | `-k` | 是 | - | API 密钥 |
-| `--model` | `-m` | 是 | - | 默认模型名称 |
-| `--temperature` | `-t` | 否 | 0.7 | 默认温度参数 |
-| `--max-tokens` | - | 否 | 4096 | 默认最大 token 数 |
-| `--top-p` | - | 否 | 1.0 | 默认 top_p 参数 |
+| `--base-url` | `-u` | 是 | - | API 基础地址（不能为空） |
+| `--api-key` | `-k` | 是 | - | API 密钥（不能为空） |
+| `--model` | `-m` | 是 | - | 默认模型名称（不能为空） |
+| `--temperature` | `-t` | 否 | 0.7 | 默认温度参数（范围 `0.0-2.0`） |
+| `--max-tokens` | - | 否 | 4096 | 默认最大 token 数（必须为正整数） |
+| `--top-p` | - | 否 | 1.0 | 默认 top_p 参数（范围 `0.0-1.0`） |
 | `--system-prompt` | `-s` | 否 | (空) | 默认系统提示词 |
 | `--default` | - | 否 | false | 设为默认提供商 |
+
+> 📝 `temperature` / `top_p` / `max_tokens` 以及必填字符串字段会在写库前做参数校验；超出范围或为空会抛出 `ValidationError`，不会把非法数据持久化。
 
 ### qxw-llm chat
 
@@ -475,8 +477,8 @@ qxw-serve image-web --no-recursive            # 不递归扫描子目录
 | `--dir` | `-d` | `.` | 图片目录路径 |
 | `--port` | `-p` | 8080 | 服务端口 |
 | `--host` | `-H` | 127.0.0.1 | 监听地址 |
-| `--thumb-size` | `-s` | 400 | 缩略图尺寸（像素） |
-| `--thumb-quality` | - | 85 | 缩略图 JPEG 质量 (1-100) |
+| `--thumb-size` | `-s` | 400 | 缩略图尺寸（像素，范围 `50-4096`） |
+| `--thumb-quality` | - | 85 | 缩略图 JPEG 质量 (`1-100`) |
 | `--recursive` / `--no-recursive` | `-r` | `--recursive` | 是否递归扫描子目录 |
 
 #### 支持的格式

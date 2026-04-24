@@ -18,6 +18,7 @@ import datetime as dt
 import io
 import os
 import platform
+import shlex
 import sys
 from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
@@ -90,7 +91,9 @@ def _completion_file_path(shell: str) -> Path:
 
 
 def _source_line(shell: str) -> str:
-    return f'source "{_completion_file_path(shell)}"'
+    # 用户 HOME 路径中可能含空格或特殊字符（例如 "My Laptop"），
+    # 直接内插会让 rc 里的 source 指令被 shell 错误地切词，这里显式转义
+    return f"source {shlex.quote(str(_completion_file_path(shell)))}"
 
 
 def _iter_qxw_commands() -> tuple[list[tuple[str, object]], list[tuple[str, str]]]:

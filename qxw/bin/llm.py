@@ -18,6 +18,7 @@ QXW AI 对话工具统一入口（合并自 qxw-chat / qxw-chat-provider）。
 """
 
 import sys
+import time
 
 import click
 from rich.console import Console
@@ -814,8 +815,6 @@ def set_default_provider(name: str) -> None:
 
 
 def _ping_one(provider) -> tuple[bool, str]:
-    import time
-
     params = ChatParams(
         model=provider.model,
         temperature=provider.temperature,

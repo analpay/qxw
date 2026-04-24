@@ -57,14 +57,21 @@ class TestJsonOverride:
         assert isinstance(settings.log_dir, Path)
         assert settings.log_dir == _isolated_home / "custom_logs"
 
-    def test_JSON_解析失败不抛错_静默回退默认值(self, _isolated_home: Path) -> None:
+    def test_JSON_解析失败不抛错_静默回退默认值(
+        self, _isolated_home: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
         cfg_dir = _isolated_home / ".config" / "qxw"
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "setting.json").write_text("{ this is not json", encoding="utf-8")
 
-        settings = AppSettings()
+        with caplog.at_level(logging.WARNING, logger="qxw.config.settings"):
+            settings = AppSettings()
         # 依然可得到默认值，不抛异常
         assert settings.log_level == "INFO"
+        # 但必须留下告警日志，避免静默吞错
+        assert any("JSON 解析失败" in rec.getMessage() for rec in caplog.records)
 
     def test_JSON_中未知键被忽略(self, _isolated_home: Path) -> None:
         cfg_dir = _isolated_home / ".config" / "qxw"
