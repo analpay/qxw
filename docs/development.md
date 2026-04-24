@@ -29,6 +29,7 @@ qxw/
         ├── serve_file.py      # qxw-serve file-web 后端
         ├── serve_image.py     # qxw-serve image-web 后端
         ├── summary_service.py # qxw-markdown summary 目录生成
+        ├── math_service.py    # qxw-math AST 表达式求值
         └── ...                # image_service / markdown_service / ...
 ```
 
@@ -294,7 +295,9 @@ tests/
 ├── test_image_service_auto_enhance.py # auto_enhance_image 服务层（EXIF / RGBA / HEIC）
 ├── test_image_cli_change.py           # qxw-image change CLI（click CliRunner）
 ├── test_markdown_service.py           # PlantUML 围栏提取 / SVG 注入等纯函数
-└── test_str_cmd.py                    # qxw-str 命令（click CliRunner）
+├── test_str_cmd.py                    # qxw-str 命令（click CliRunner）
+├── test_math_service.py               # 数学表达式求值 AST 白名单
+└── test_bin_math.py                   # qxw-math 命令（click CliRunner）
 ```
 
 ### 编写新测试的约定
