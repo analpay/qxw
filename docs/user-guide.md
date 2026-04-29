@@ -25,6 +25,7 @@
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） | ✅ 可用 |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） | ✅ 可用 |
 | `qxw-math` | 🧮 字符串数学表达式计算（四则 / 次方 / 开方） | ✅ 可用 |
+| `qxw-git` | 📦 git 仓库工具集（archive 打包 tar/zip，剔除 .git，自动 LFS pull） | ✅ 可用 |
 
 ### qxw-serve 子命令
 
@@ -1343,3 +1344,84 @@ qxw-math -q "sqrt(2)"  # 1.4142135623730951
 | 6 | 表达式语法错误 / 含不支持的节点 / 除零 / 负数开方 / 结果溢出（`ValidationError`）|
 | 130 | 用户 Ctrl-C 中断 |
 | 1 | 未预期的内部错误 |
+
+## qxw-git
+
+git 仓库相关工具集。当前提供 `archive` 子命令：把一个 git 工作树打包为 tar / zip，包内 **不含** `.git` 目录，且 git-lfs 文件已提前 `git lfs pull` 实体化为真实内容（而不是停留在指针文件）。
+
+### 子命令概览
+
+| 子命令 | 说明 |
+|--------|------|
+| `archive` | 📦 打包 git 仓库为 tar / tar.gz / tar.bz2 / tar.xz / zip（默认 tar） |
+
+### archive 基本用法
+
+```bash
+# 当前目录（必须在 git 工作树内），输出 ../<repo>.tar
+qxw-git archive
+
+# 指定格式（默认 tar）
+qxw-git archive -f tar.gz
+qxw-git archive -f tar.bz2
+qxw-git archive -f tar.xz
+qxw-git archive -f zip
+
+# 自定义输出路径与包内顶层目录名
+qxw-git archive -f zip -o /tmp/myrepo.zip --prefix release-1.0
+
+# 跳过 git lfs pull（仓库无 LFS 或不需要实体化时使用）
+qxw-git archive --no-lfs
+
+# 指定仓库路径（接受工作树内任意子路径，自动定位仓库根）
+qxw-git archive /path/to/repo
+
+# 仅输出生成包路径（脚本场景）
+ARCHIVE=$(qxw-git archive --quiet)
+echo "$ARCHIVE"
+```
+
+### archive 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `[REPO]` | - | 当前工作目录 | 仓库路径（接受工作树内任意子路径，会自动 `git rev-parse --show-toplevel`） |
+| `--format` | `-f` | `tar` | 打包格式，可选：`tar` / `tar.gz` / `tar.bz2` / `tar.xz` / `zip` |
+| `--output` | `-o` | `<repo父目录>/<repo名>.<格式>` | 输出文件路径 |
+| `--prefix` | - | 仓库目录名 | 包内顶层目录名（类似 `git archive --prefix=`） |
+| `--no-lfs` | - | false | 跳过 `git lfs pull`；仓库引用了 LFS 但 git-lfs 不可用时也可用此项绕过 |
+| `--quiet` | `-q` | false | 仅输出生成包路径，便于 `$(...)` 捕获 |
+| `--help` | - | - | 显示帮助 |
+
+### 打包规则
+
+- **不含 .git**：打包的文件由 `git ls-files -z` 决定，自动跳过 `.git` 目录与未跟踪文件（`.gitignore` 命中的也不会进包）
+- **LFS 实体化**：检测顺序：先尝试 `git lfs ls-files`（可用时直接判断仓库是否有 LFS 文件）；若 git-lfs 不可用，再扫 `.gitattributes` 是否含 `filter=lfs`
+- **子模块 / 缺失文件**：会被静默跳过并写一条 warning，不会让整个打包失败
+- **顶层目录**：默认 = 仓库目录名，可用 `--prefix` 覆盖（与 `git archive --prefix=release/` 语义一致）
+
+### 输出示例
+
+```
+$ qxw-git archive -f zip -o /tmp/myrepo.zip
+                  git 仓库打包结果                  
+┌─────────────┬─────────────────────────────────┐
+│ 输出路径    │ /tmp/myrepo.zip                 │
+│ 文件数      │ 128                             │
+│ 包大小      │ 4.32 MB                         │
+│ LFS 已 pull │ 是                              │
+└─────────────┴─────────────────────────────────┘
+```
+
+### 错误与退出码
+
+| 退出码 | 触发场景 |
+|--------|----------|
+| 0 | 打包成功 |
+| 2 | Click 参数校验失败（如 `--format` 不在允许列表内） |
+| 4 | git 命令执行失败（不在 git 仓库 / 找不到 git 命令 / 仓库需要 LFS 但 git-lfs 不可用，`CommandError`） |
+| 6 | 路径不存在 / 路径不是目录 / 不支持的打包格式 / 空 prefix（`ValidationError`） |
+| 130 | 用户 Ctrl-C 中断 |
+| 1 | 未预期的内部错误 |
+
+> 仓库引用了 LFS 但当前环境未装 git-lfs 时，命令会拒绝继续以避免输出"看起来是 LFS 文件，实际只是指针"的损坏包；如果你确实只想要个普通 tar，加 `--no-lfs` 即可。

@@ -83,6 +83,7 @@ qxw hello --name 开发者
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） |
 | `qxw-math` | 🧮 字符串数学表达式计算（四则 / 次方 / 开方） |
+| `qxw-git` | 📦 git 仓库工具集（archive 打包 tar/zip，剔除 .git，自动 LFS pull） |
 
 ### qxw-serve 子命令
 

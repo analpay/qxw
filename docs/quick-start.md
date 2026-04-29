@@ -287,7 +287,32 @@ echo "$RESULT"                # 4
 
 > 底层用 `ast` 白名单遍历实现，不调用 `eval`，对不可信输入安全；属性访问、变量名、未授权的函数都会被拒绝。
 
-## 13. 下一步
+## 13. git 仓库打包
+
+把当前 git 项目打包成一个 tar / zip 包，包内 **不含 `.git` 目录**，且 git-lfs 文件已提前 `git lfs pull` 实体化（不会留下指针文件）：
+
+```bash
+# 当前仓库 → ../<repo>.tar（默认 tar）
+qxw-git archive
+
+# 切换格式
+qxw-git archive -f tar.gz
+qxw-git archive -f zip
+
+# 自定义输出路径 + 包内顶层目录名
+qxw-git archive -f zip -o /tmp/myrepo.zip --prefix release-1.0
+
+# 跳过 git lfs pull（仓库无 LFS 或不想实体化时）
+qxw-git archive --no-lfs
+
+# 脚本捕获生成包路径
+ARCHIVE=$(qxw-git archive --quiet)
+```
+
+> 打包的文件清单来自 `git ls-files`，自动忽略 `.git` 与 `.gitignore` 命中的内容。
+> 仓库引用了 LFS 但当前环境未装 git-lfs 时，命令会拒绝继续，避免输出"看起来是 LFS 文件，实际只是指针"的损坏包；想绕过加 `--no-lfs` 即可。
+
+## 14. 下一步
 
 - 阅读 [使用手册](user-guide.md) 了解所有可用命令
 - 阅读 [开发手册](development.md) 了解如何开发新命令

@@ -49,6 +49,7 @@ qxw-image = "qxw.bin.image:main"
 qxw-markdown = "qxw.bin.markdown:main"
 qxw-str = "qxw.bin.str_cmd:main"
 qxw-math = "qxw.bin.math:main"
+qxw-git = "qxw.bin.git_cmd:main"
 
 [tool.setuptools.packages.find]
 include = ["qxw*"]
