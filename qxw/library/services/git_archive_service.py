@@ -6,6 +6,8 @@
 - 若仓库使用了 git-lfs，先执行 ``git lfs pull`` 让指针文件实体化为真实文件
 - 仅打包被 git 跟踪的文件（``git ls-files``），自动忽略未跟踪与 .gitignore 命中的内容
 - 支持 ``tar`` / ``tar.gz`` / ``tar.bz2`` / ``tar.xz`` / ``zip`` 五种格式
+- 支持 ``ref`` 参数：基于 ``git worktree add --detach <ref>`` 在临时目录里
+  签出指定分支 / tag / commit-ish 后再打包，结束时自动清理 worktree
 
 实现依赖外部 ``git`` 命令（必需）与 ``git-lfs``（仅当仓库引用了 LFS 时必需）。
 所有 git 子进程错误统一映射为 :class:`CommandError`，参数 / 路径错误映射为
@@ -14,12 +16,16 @@
 
 from __future__ import annotations
 
+import re
+import shutil
 import subprocess
 import tarfile
+import tempfile
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Iterator, Literal
 
 from qxw.library.base.exceptions import CommandError, ValidationError
 from qxw.library.base.logger import get_logger
@@ -43,6 +49,9 @@ _TAR_MODES: dict[str, str] = {
     "tar.xz": "w:xz",
 }
 
+# ref 名内可能含有 / : \ 等不适合文件名的字符，统一替换为 _
+_REF_FILENAME_SANITIZER = re.compile(r"[\\/:\s]+")
+
 
 @dataclass(frozen=True)
 class ArchiveResult:
@@ -52,6 +61,7 @@ class ArchiveResult:
     file_count: int
     archive_size: int
     lfs_pulled: bool
+    ref: str | None = None
 
 
 def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -82,6 +92,45 @@ def _ensure_git_repo(repo_path: Path) -> Path:
     if not top:
         raise CommandError(f"无法定位 git 仓库根目录: {repo_path}")
     return Path(top)
+
+
+def _validate_ref(repo: Path, ref: str) -> None:
+    """校验 ref 在仓库内可解析为某个 commit"""
+    if not ref or not ref.strip():
+        raise ValidationError("ref 不能为空")
+    try:
+        _run_git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=repo)
+    except CommandError as e:
+        raise ValidationError(f"分支 / tag / commit 不存在: {ref}") from e
+
+
+@contextmanager
+def _temp_worktree(repo: Path, ref: str) -> Iterator[Path]:
+    """在临时目录中签出指定 ref 为 detached worktree，退出时自动清理
+
+    使用 ``git worktree add --detach`` 而不是 ``git checkout``，避免污染主工作树
+    的状态；同时与主仓库共享 ``.git/lfs``、``.git/objects``，已 pull 过的 LFS
+    对象不会重复下载。
+    """
+    tmp_root = Path(tempfile.mkdtemp(prefix="qxw-git-arc-"))
+    wt_path = tmp_root / "wt"
+    try:
+        try:
+            _run_git(
+                ["worktree", "add", "--detach", str(wt_path), ref],
+                cwd=repo,
+            )
+        except CommandError:
+            shutil.rmtree(tmp_root, ignore_errors=True)
+            raise
+        yield wt_path
+    finally:
+        # remove --force：worktree 内可能残留 LFS pull 之后的临时改动
+        try:
+            _run_git(["worktree", "remove", "--force", str(wt_path)], cwd=repo)
+        except CommandError as e:
+            logger.warning("清理临时 worktree 失败（将直接 rmtree）: %s", e)
+        shutil.rmtree(tmp_root, ignore_errors=True)
 
 
 def _list_tracked_files(repo: Path) -> list[str]:
@@ -135,9 +184,21 @@ def _validate_format(fmt: str) -> ArchiveFormat:
     return fmt  # type: ignore[return-value]
 
 
-def _resolve_output(repo: Path, fmt: ArchiveFormat, output: Path | None) -> Path:
+def _sanitize_ref_for_filename(ref: str) -> str:
+    """把 ref 名转成可用的文件名片段（替换 / \\ : 空白为 _）"""
+    return _REF_FILENAME_SANITIZER.sub("_", ref).strip("_") or "ref"
+
+
+def _resolve_output(
+    repo: Path,
+    fmt: ArchiveFormat,
+    output: Path | None,
+    ref: str | None,
+) -> Path:
     if output is not None:
         return output
+    if ref is not None:
+        return repo.parent / f"{repo.name}-{_sanitize_ref_for_filename(ref)}.{fmt}"
     return repo.parent / f"{repo.name}.{fmt}"
 
 
@@ -205,31 +266,19 @@ def _add_files_to_zip(
     return count
 
 
-def archive_repo(
-    repo_path: Path,
-    output: Path | None = None,
-    fmt: str = DEFAULT_FORMAT,
-    pull_lfs: bool = True,
-    arcname_prefix: str | None = None,
-) -> ArchiveResult:
-    """将 git 仓库打包为 tar / zip 包
-
-    :param repo_path: 仓库路径（接受工作树内任意子路径，会自动定位根）
-    :param output: 输出文件路径；缺省时落到 ``<repo>/../<repo>.<fmt>``
-    :param fmt: 打包格式，见 :data:`SUPPORTED_FORMATS`
-    :param pull_lfs: 是否在打包前执行 ``git lfs pull``（仓库使用 LFS 时生效）
-    :param arcname_prefix: 包内顶层目录名，缺省 = 仓库目录名
-
-    :raises ValidationError: 路径不存在 / 不是目录 / 格式不支持
-    :raises CommandError: 不在 git 工作树内 / git-lfs 不可用但仓库需要 LFS
-    """
-    fmt_ok = _validate_format(fmt)
-    repo = _ensure_git_repo(repo_path)
-    files = _list_tracked_files(repo)
+def _pack_worktree(
+    worktree: Path,
+    out_path: Path,
+    fmt_ok: ArchiveFormat,
+    pull_lfs: bool,
+    prefix: str,
+) -> tuple[int, bool]:
+    """把一棵已签出的工作树打成 tar / zip，返回 (file_count, lfs_pulled)"""
+    files = _list_tracked_files(worktree)
     if not files:
         raise CommandError("仓库内没有任何被 git 跟踪的文件")
 
-    needs_lfs, lfs_available = _detect_lfs(repo)
+    needs_lfs, lfs_available = _detect_lfs(worktree)
     lfs_pulled = False
     if pull_lfs and needs_lfs:
         if not lfs_available:
@@ -237,23 +286,59 @@ def archive_repo(
                 "仓库引用了 git-lfs 文件，但当前环境未安装 git-lfs，"
                 "无法实体化 LFS 内容；如需跳过请加 --no-lfs"
             )
-        _run_git(["lfs", "pull"], cwd=repo)
+        _run_git(["lfs", "pull"], cwd=worktree)
         lfs_pulled = True
 
-    out_path = _resolve_output(repo, fmt_ok, output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if fmt_ok == "zip":
+        count = _add_files_to_zip(out_path, worktree, files, prefix)
+    else:
+        count = _add_files_to_tar(out_path, worktree, files, _TAR_MODES[fmt_ok], prefix)
+    return count, lfs_pulled
+
+
+def archive_repo(
+    repo_path: Path,
+    output: Path | None = None,
+    fmt: str = DEFAULT_FORMAT,
+    pull_lfs: bool = True,
+    arcname_prefix: str | None = None,
+    ref: str | None = None,
+) -> ArchiveResult:
+    """将 git 仓库打包为 tar / zip 包
+
+    :param repo_path: 仓库路径（接受工作树内任意子路径，会自动定位根）
+    :param output: 输出文件路径；缺省时落到 ``<repo>/../<repo>.<fmt>``，
+                   指定 ``ref`` 时为 ``<repo>/../<repo>-<sanitized_ref>.<fmt>``
+    :param fmt: 打包格式，见 :data:`SUPPORTED_FORMATS`
+    :param pull_lfs: 是否在打包前执行 ``git lfs pull``（仓库使用 LFS 时生效）
+    :param arcname_prefix: 包内顶层目录名，缺省 = 仓库目录名
+    :param ref: 要打包的分支 / tag / commit-ish；缺省 = 当前工作树。
+                指定时会在临时目录中以 ``git worktree add --detach <ref>`` 签出，
+                打包结束后自动清理临时 worktree
+
+    :raises ValidationError: 路径不存在 / 不是目录 / 格式不支持 / ref 不存在
+    :raises CommandError: 不在 git 工作树内 / git-lfs 不可用但仓库需要 LFS
+    """
+    fmt_ok = _validate_format(fmt)
+    repo = _ensure_git_repo(repo_path)
+
+    out_path = _resolve_output(repo, fmt_ok, output, ref)
     prefix = (arcname_prefix or repo.name).strip("/")
     if not prefix:
         raise ValidationError("包内顶层目录名不能为空")
 
-    if fmt_ok == "zip":
-        count = _add_files_to_zip(out_path, repo, files, prefix)
+    if ref is not None:
+        _validate_ref(repo, ref)
+        with _temp_worktree(repo, ref) as wt:
+            count, lfs_pulled = _pack_worktree(wt, out_path, fmt_ok, pull_lfs, prefix)
     else:
-        count = _add_files_to_tar(out_path, repo, files, _TAR_MODES[fmt_ok], prefix)
+        count, lfs_pulled = _pack_worktree(repo, out_path, fmt_ok, pull_lfs, prefix)
 
     return ArchiveResult(
         output_path=out_path,
         file_count=count,
         archive_size=out_path.stat().st_size,
         lfs_pulled=lfs_pulled,
+        ref=ref,
     )

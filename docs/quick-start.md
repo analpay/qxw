@@ -305,6 +305,11 @@ qxw-git archive -f zip -o /tmp/myrepo.zip --prefix release-1.0
 # 跳过 git lfs pull（仓库无 LFS 或不想实体化时）
 qxw-git archive --no-lfs
 
+# 指定要打包的分支 / tag / commit（不会动主工作树）
+qxw-git archive -r main
+qxw-git archive --ref v1.2.0 -f tar.gz
+qxw-git archive -r feature/foo               # 含 / 的分支名也支持
+
 # 脚本捕获生成包路径
 ARCHIVE=$(qxw-git archive --quiet)
 ```

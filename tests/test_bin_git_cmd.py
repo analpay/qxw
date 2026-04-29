@@ -52,10 +52,16 @@ class TestTopLevel:
 # ============================================================
 
 
-def _fake_result(tmp_path: Path) -> ArchiveResult:
+def _fake_result(tmp_path: Path, ref: str | None = None) -> ArchiveResult:
     out = tmp_path / "demo.tar"
     out.write_bytes(b"x" * 2048)
-    return ArchiveResult(output_path=out, file_count=42, archive_size=2048, lfs_pulled=True)
+    return ArchiveResult(
+        output_path=out,
+        file_count=42,
+        archive_size=2048,
+        lfs_pulled=True,
+        ref=ref,
+    )
 
 
 class TestArchiveSuccess:
@@ -136,6 +142,63 @@ class TestArchiveSuccess:
         code, _ = _run(["archive", str(tmp_path), "--prefix", "release-1.0"])
         assert code == 0
         assert captured["arcname_prefix"] == "release-1.0"
+
+    def test_ref_长选项透传(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy(**kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return _fake_result(tmp_path, ref="main")
+
+        monkeypatch.setattr(git_mod, "archive_repo", _spy)
+        code, _ = _run(["archive", str(tmp_path), "--ref", "main"])
+        assert code == 0
+        assert captured["ref"] == "main"
+
+    def test_ref_短选项_r_等价(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy(**kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return _fake_result(tmp_path, ref="v1.2.0")
+
+        monkeypatch.setattr(git_mod, "archive_repo", _spy)
+        code, _ = _run(["archive", str(tmp_path), "-r", "v1.2.0"])
+        assert code == 0
+        assert captured["ref"] == "v1.2.0"
+
+    def test_未指定_ref_时透传_None(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy(**kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return _fake_result(tmp_path)
+
+        monkeypatch.setattr(git_mod, "archive_repo", _spy)
+        code, _ = _run(["archive", str(tmp_path)])
+        assert code == 0
+        assert captured["ref"] is None
+
+    def test_table_中包含_Ref_行_默认显示当前工作树(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(git_mod, "archive_repo", lambda **_: _fake_result(tmp_path))
+        monkeypatch.setattr(git_mod.console, "width", 240, raising=False)
+        code, out = _run(["archive", str(tmp_path)])
+        assert code == 0
+        assert "Ref" in out
+        assert "当前工作树" in out
+
+    def test_table_中包含_Ref_行_显示_ref(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            git_mod, "archive_repo", lambda **_: _fake_result(tmp_path, ref="release-1.2")
+        )
+        monkeypatch.setattr(git_mod.console, "width", 240, raising=False)
+        code, out = _run(["archive", str(tmp_path), "-r", "release-1.2"])
+        assert code == 0
+        assert "release-1.2" in out
 
 
 # ============================================================

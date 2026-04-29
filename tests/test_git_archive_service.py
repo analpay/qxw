@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -458,3 +459,159 @@ def test_supported_formats_常量包含五种() -> None:
 
 def test_default_format_为_tar() -> None:
     assert svc.DEFAULT_FORMAT == "tar"
+
+
+# ============================================================
+# --ref 分支：基于 git worktree add --detach 打包指定分支 / tag
+# ============================================================
+
+
+def _setup_two_branches(tmp_path: Path) -> Path:
+    """初始化一个含 main / feature 两条分支与一个 tag 的仓库"""
+    repo = tmp_path / "branched"
+    _init_repo(repo)
+    # main 分支：only_main.txt
+    _add_and_commit(repo, {"shared.txt": "v1", "only_main.txt": "M"})
+    _git(["tag", "v1.0"], cwd=repo)
+    # 切到 feature/foo（含斜杠，验证 ref 文件名转义）
+    _git(["checkout", "-q", "-b", "feature/foo"], cwd=repo)
+    (repo / "only_feature.txt").write_text("F", encoding="utf-8")
+    # 同时把 only_main 删掉，保证两条分支差异显著
+    (repo / "only_main.txt").unlink()
+    _git(["add", "-A"], cwd=repo)
+    _git(["commit", "-q", "-m", "feature"], cwd=repo)
+    # 把工作树留在 feature 分支（与 main 内容不一样）
+    return repo
+
+
+class TestRefArchive:
+    def test_ref_不存在_抛_ValidationError(self, tmp_path: Path) -> None:
+        repo = tmp_path / "r"
+        _init_repo(repo)
+        _add_and_commit(repo, {"a.txt": "1"})
+        with pytest.raises(ValidationError) as ei:
+            svc.archive_repo(repo, ref="no-such-branch")
+        assert "不存在" in ei.value.message
+        assert "no-such-branch" in ei.value.message
+
+    def test_ref_为空字符串_抛_ValidationError(self, tmp_path: Path) -> None:
+        repo = tmp_path / "r"
+        _init_repo(repo)
+        _add_and_commit(repo, {"a.txt": "1"})
+        with pytest.raises(ValidationError) as ei:
+            svc.archive_repo(repo, ref="   ")
+        assert "ref" in ei.value.message.lower() or "不能为空" in ei.value.message
+
+    def test_打包_main_分支_只含_main_的文件(self, tmp_path: Path) -> None:
+        repo = _setup_two_branches(tmp_path)
+        result = svc.archive_repo(repo, ref="main")
+        # 默认输出名 = <repo>-<ref>.<fmt>
+        assert result.output_path == repo.parent / "branched-main.tar"
+        assert result.ref == "main"
+        with tarfile.open(result.output_path) as tar:
+            names = set(tar.getnames())
+        # 顶层 prefix = repo.name，包内不含 .git
+        assert "branched/shared.txt" in names
+        assert "branched/only_main.txt" in names
+        assert "branched/only_feature.txt" not in names
+        assert all(".git/" not in n for n in names)
+
+    def test_打包_tag(self, tmp_path: Path) -> None:
+        repo = _setup_two_branches(tmp_path)
+        result = svc.archive_repo(repo, ref="v1.0", fmt="zip")
+        assert result.ref == "v1.0"
+        assert result.output_path == repo.parent / "branched-v1.0.zip"
+        with zipfile.ZipFile(result.output_path) as zf:
+            names = set(zf.namelist())
+        # tag 指向 main，应只含 only_main.txt
+        assert "branched/only_main.txt" in names
+        assert "branched/only_feature.txt" not in names
+
+    def test_含斜杠的_ref_默认输出名转义(self, tmp_path: Path) -> None:
+        repo = _setup_two_branches(tmp_path)
+        result = svc.archive_repo(repo, ref="feature/foo")
+        # / 应被替换为 _
+        assert result.output_path == repo.parent / "branched-feature_foo.tar"
+
+    def test_打包_feature_分支_包含_only_feature(self, tmp_path: Path) -> None:
+        repo = _setup_two_branches(tmp_path)
+        result = svc.archive_repo(repo, ref="feature/foo")
+        with tarfile.open(result.output_path) as tar:
+            names = set(tar.getnames())
+        assert "branched/only_feature.txt" in names
+        assert "branched/only_main.txt" not in names
+
+    def test_ref_存在但_worktree_临时目录已被自动清理(self, tmp_path: Path) -> None:
+        repo = _setup_two_branches(tmp_path)
+        before = list(Path(tempfile.gettempdir()).glob("qxw-git-arc-*"))
+        svc.archive_repo(repo, ref="main")
+        after = list(Path(tempfile.gettempdir()).glob("qxw-git-arc-*"))
+        # 不会留下我们的临时 worktree 目录（与运行前的快照差集为空）
+        leftover = set(after) - set(before)
+        assert leftover == set()
+
+    def test_工作树仍为_feature_打包后未被切换(self, tmp_path: Path) -> None:
+        """archive_repo(ref=...) 不应把主工作树切到目标分支"""
+        repo = _setup_two_branches(tmp_path)
+        svc.archive_repo(repo, ref="main")
+        # 仍应处于 feature/foo
+        head = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert head == "feature/foo"
+
+    def test_ref_打包_lfs_检测分支被复用(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """指定 ref 时应在临时 worktree 内调用 _detect_lfs / lfs pull"""
+        repo = _setup_two_branches(tmp_path)
+        recorded_detect: list[Path] = []
+        recorded_lfs_pull: list[Path] = []
+
+        def _fake_detect(p: Path):  # type: ignore[no-untyped-def]
+            recorded_detect.append(p)
+            return True, True
+
+        orig = svc._run_git
+
+        def _spy(args: list[str], cwd: Path):  # type: ignore[no-untyped-def]
+            if args[:2] == ["lfs", "pull"]:
+                recorded_lfs_pull.append(cwd)
+                return subprocess.CompletedProcess(args=["git", *args], returncode=0, stdout="", stderr="")
+            return orig(args, cwd)
+
+        monkeypatch.setattr(svc, "_detect_lfs", _fake_detect)
+        monkeypatch.setattr(svc, "_run_git", _spy)
+        result = svc.archive_repo(repo, ref="main")
+        assert result.lfs_pulled is True
+        # _detect_lfs 与 lfs pull 都应作用于临时 worktree（不是主仓库本身）
+        assert recorded_detect, "_detect_lfs should have been called"
+        assert recorded_detect[0] != repo
+        assert recorded_lfs_pull, "git lfs pull should have been invoked"
+        assert recorded_lfs_pull[0] != repo
+
+    def test_显式_output_覆盖默认_ref_命名(self, tmp_path: Path) -> None:
+        repo = _setup_two_branches(tmp_path)
+        out = tmp_path / "custom" / "x.tar.gz"
+        result = svc.archive_repo(repo, ref="main", fmt="tar.gz", output=out)
+        assert result.output_path == out
+        assert out.exists()
+
+
+class TestSanitizeRefForFilename:
+    def test_斜杠_反斜杠_冒号_空白_全部替换为下划线(self) -> None:
+        assert svc._sanitize_ref_for_filename("feature/foo") == "feature_foo"
+        assert svc._sanitize_ref_for_filename("a\\b") == "a_b"
+        assert svc._sanitize_ref_for_filename("ns:tag") == "ns_tag"
+        assert svc._sanitize_ref_for_filename("a b") == "a_b"
+
+    def test_全是分隔符_退化为_ref(self) -> None:
+        assert svc._sanitize_ref_for_filename("///") == "ref"
+
+    def test_保留普通字符与点(self) -> None:
+        assert svc._sanitize_ref_for_filename("v1.2.3") == "v1.2.3"
+        assert svc._sanitize_ref_for_filename("release-2026") == "release-2026"

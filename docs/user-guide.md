@@ -1376,6 +1376,11 @@ qxw-git archive --no-lfs
 # 指定仓库路径（接受工作树内任意子路径，自动定位仓库根）
 qxw-git archive /path/to/repo
 
+# 指定要打包的分支 / tag / commit（不会动主工作树）
+qxw-git archive -r main
+qxw-git archive -r v1.2.0 -f tar.gz
+qxw-git archive --ref feature/foo            # 含 / 的分支名也支持
+
 # 仅输出生成包路径（脚本场景）
 ARCHIVE=$(qxw-git archive --quiet)
 echo "$ARCHIVE"
@@ -1387,8 +1392,9 @@ echo "$ARCHIVE"
 |------|------|--------|------|
 | `[REPO]` | - | 当前工作目录 | 仓库路径（接受工作树内任意子路径，会自动 `git rev-parse --show-toplevel`） |
 | `--format` | `-f` | `tar` | 打包格式，可选：`tar` / `tar.gz` / `tar.bz2` / `tar.xz` / `zip` |
-| `--output` | `-o` | `<repo父目录>/<repo名>.<格式>` | 输出文件路径 |
+| `--output` | `-o` | `<repo父目录>/<repo名>.<格式>` 或 `<repo>-<sanitized_ref>.<格式>` | 输出文件路径 |
 | `--prefix` | - | 仓库目录名 | 包内顶层目录名（类似 `git archive --prefix=`） |
+| `--ref` | `-r` | 当前工作树 | 要打包的分支 / tag / commit-ish；任意 `git rev-parse` 可解析的引用都行 |
 | `--no-lfs` | - | false | 跳过 `git lfs pull`；仓库引用了 LFS 但 git-lfs 不可用时也可用此项绕过 |
 | `--quiet` | `-q` | false | 仅输出生成包路径，便于 `$(...)` 捕获 |
 | `--help` | - | - | 显示帮助 |
@@ -1399,14 +1405,17 @@ echo "$ARCHIVE"
 - **LFS 实体化**：检测顺序：先尝试 `git lfs ls-files`（可用时直接判断仓库是否有 LFS 文件）；若 git-lfs 不可用，再扫 `.gitattributes` 是否含 `filter=lfs`
 - **子模块 / 缺失文件**：会被静默跳过并写一条 warning，不会让整个打包失败
 - **顶层目录**：默认 = 仓库目录名，可用 `--prefix` 覆盖（与 `git archive --prefix=release/` 语义一致）
+- **`--ref` 内部实现**：以 `git worktree add --detach <ref> <临时目录>` 在临时目录里签出目标提交，**主工作树不会被切换或污染**；签出后在临时目录内执行 LFS pull、打包，结束时自动 `git worktree remove --force` 清理。共享 `.git/objects` 与 `.git/lfs`，已 pull 过的对象不会重复下载
+- **`--ref` 输出名**：缺省为 `<repo>-<sanitized_ref>.<fmt>`；ref 中的 `/` `\` `:` 与空白会被替换为 `_`（例如 `feature/foo` → `feature_foo`）
 
 ### 输出示例
 
 ```
-$ qxw-git archive -f zip -o /tmp/myrepo.zip
+$ qxw-git archive -r v1.2.0 -f zip -o /tmp/myrepo.zip
                   git 仓库打包结果                  
 ┌─────────────┬─────────────────────────────────┐
 │ 输出路径    │ /tmp/myrepo.zip                 │
+│ Ref         │ v1.2.0                          │
 │ 文件数      │ 128                             │
 │ 包大小      │ 4.32 MB                         │
 │ LFS 已 pull │ 是                              │
@@ -1420,7 +1429,7 @@ $ qxw-git archive -f zip -o /tmp/myrepo.zip
 | 0 | 打包成功 |
 | 2 | Click 参数校验失败（如 `--format` 不在允许列表内） |
 | 4 | git 命令执行失败（不在 git 仓库 / 找不到 git 命令 / 仓库需要 LFS 但 git-lfs 不可用，`CommandError`） |
-| 6 | 路径不存在 / 路径不是目录 / 不支持的打包格式 / 空 prefix（`ValidationError`） |
+| 6 | 路径不存在 / 路径不是目录 / 不支持的打包格式 / 空 prefix / `--ref` 不存在（`ValidationError`） |
 | 130 | 用户 Ctrl-C 中断 |
 | 1 | 未预期的内部错误 |
 

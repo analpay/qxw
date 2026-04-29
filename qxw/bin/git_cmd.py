@@ -12,6 +12,8 @@ git 仓库相关工具集合。当前提供：
     qxw-git archive -f zip -o /tmp/repo.zip         # 自定义路径
     qxw-git archive --no-lfs                        # 跳过 git lfs pull
     qxw-git archive /path/to/repo                   # 打包指定路径
+    qxw-git archive -r v1.2.0                       # 打包 tag v1.2.0
+    qxw-git archive --ref main                      # 打包 main 分支当前提交
     qxw-git --help                                  # 查看帮助
 """
 
@@ -109,6 +111,14 @@ def main(ctx: click.Context) -> None:
     help="包内顶层目录名，缺省 = 仓库目录名",
 )
 @click.option(
+    "--ref",
+    "-r",
+    "ref",
+    type=str,
+    default=None,
+    help="要打包的分支 / tag / commit-ish（任意 git rev-parse 可解析的引用）；缺省 = 当前工作树",
+)
+@click.option(
     "--no-lfs",
     "no_lfs",
     is_flag=True,
@@ -127,6 +137,7 @@ def archive_command(
     fmt: str,
     output: Path | None,
     prefix: str | None,
+    ref: str | None,
     no_lfs: bool,
     quiet: bool,
 ) -> None:
@@ -145,6 +156,9 @@ def archive_command(
         qxw-git archive -f zip -o /tmp/myrepo.zip
         qxw-git archive --no-lfs --quiet
         qxw-git archive /path/to/repo --prefix release-1.0
+        qxw-git archive -r main                 # 打包 main 分支当前提交
+        qxw-git archive -r v1.2.0 -f tar.gz     # 打包 tag v1.2.0 为 tar.gz
+        qxw-git archive --ref feature/x         # 含 / 的分支名也支持
     """
     try:
         repo_path = repo if repo is not None else Path.cwd()
@@ -154,11 +168,13 @@ def archive_command(
             fmt=fmt.lower(),
             pull_lfs=not no_lfs,
             arcname_prefix=prefix,
+            ref=ref,
         )
 
         logger.info(
-            "qxw-git archive: src=%s out=%s files=%d size=%d lfs_pulled=%s",
+            "qxw-git archive: src=%s ref=%s out=%s files=%d size=%d lfs_pulled=%s",
             repo_path,
+            ref or "<working-tree>",
             result.output_path,
             result.file_count,
             result.archive_size,
@@ -173,6 +189,7 @@ def archive_command(
         table.add_column("字段", style="cyan")
         table.add_column("值", style="green")
         table.add_row("输出路径", str(result.output_path))
+        table.add_row("Ref", result.ref or "(当前工作树)")
         table.add_row("文件数", str(result.file_count))
         table.add_row("包大小", _human_size(result.archive_size))
         table.add_row("LFS 已 pull", "是" if result.lfs_pulled else "否")
