@@ -256,6 +256,32 @@ from qxw.library.services.auto_enhance import (
 
 - `qxw/bin/image.py::change_command`：选项 `--intensity/--hdr/--preserve-exif/--overwrite/--workers/...`，骨架与 `filter_command` 对齐。
 
+## 扩展：元数据擦除（qxw-image clear）
+
+`qxw-image clear` 子命令**原地覆盖**位图源文件、擦除 EXIF / IPTC / XMP / ICC 等容器级元数据，像素数据保留。和 `change/filter` 不同，clear 不输出到子目录、不重编码像素，而是按格式选择最少改动的写回路径。
+
+### 公共 API
+
+```python
+from qxw.library.services.image_service import (
+    CLEARABLE_METADATA_EXTENSIONS,   # frozenset：clear 支持的扩展名集合
+    scan_clearable_images,           # (directory, recursive=False) -> list[Path]
+    clear_image_metadata,            # (path) -> bool；True = 实际改写，False = 本来就无元数据
+)
+```
+
+### 关键设计
+
+1. **格式分流**：JPEG 走 `quality="keep"` 沿用原始 DCT 系数（真正无损）；PNG/TIFF 走 Pillow 默认重新编码（格式本身无损）；WebP 强制 `lossless=True` 重新编码（避免重新压缩塌掉画质）。
+2. **HEIC/HEIF 不在范围内**：libheif 的 HEIC 编码依赖于带 x265 的构建，环境差异大，暂不纳入。
+3. **临时文件 + `os.replace` 原子替换**：临时文件落在源文件同目录（保证同设备 rename 原子），编码失败时清理临时文件 + 抛异常，源文件保持原样。
+4. **TIFF 检测特殊处理**：TIFF 把 EXIF 烫平到 native tag（`tag_v2`），而不是 `info["exif"]`。`_has_clearable_metadata()` 通过 `Image.getexif()` 检查是否含 `_TIFF_USER_METADATA_TAGS` 中的"用户级" tag（Make/Model/Software/Copyright/ExifIFD/GPSInfo/ICC/IPTC/XMP/Photoshop 等），与编码必须的结构性 tag（ImageWidth/Compression/StripOffsets...）区分开。
+5. **幂等**：第二次调用对同一文件返回 `False`、不写文件。无元数据的输入也返回 `False` 且 mtime 不变。
+
+### CLI
+
+- `qxw/bin/image.py::clear_command`：选项 `--dir/--recursive/--yes/--workers`。**默认会要求二次确认**，必须输入 yes 才继续；`--yes/-y` 跳过提示。统计输出分为 `已清理` / `无元数据`（未改动）/ `失败` 三类。
+
 ## 单元测试
 
 项目使用 `pytest` 作为测试框架，测试代码位于 `tests/` 目录。
@@ -295,6 +321,8 @@ tests/
 ├── test_auto_enhance.py               # 自动增强算法（边界 / 暗光 / HDR / 肤色）
 ├── test_image_service_auto_enhance.py # auto_enhance_image 服务层（EXIF / RGBA / HEIC）
 ├── test_image_cli_change.py           # qxw-image change CLI（click CliRunner）
+# qxw-image clear 的测试合并在 test_image_service.py（TestClearImageMetadata 等）
+# 与 test_bin_image.py（TestClearCommand）中，未单独建文件。
 ├── test_markdown_service.py           # PlantUML 围栏提取 / SVG 注入等纯函数
 ├── test_str_cmd.py                    # qxw-str 命令（click CliRunner）
 ├── test_math_service.py               # 数学表达式求值 AST 白名单

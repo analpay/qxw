@@ -597,3 +597,263 @@ class TestOpenHelpersSuccess:
         monkeypatch.setitem(_sys.modules, "pillow_heif", heif_mod)
 
         assert isvc._open_heic_as_pil(tmp_path / "x.heic") is None
+
+
+class TestScanClearableImages:
+    def test_仅收支持的扩展名(self, tmp_path: Path) -> None:
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        (tmp_path / "b.png").write_bytes(b"x")
+        (tmp_path / "c.webp").write_bytes(b"x")
+        (tmp_path / "d.tiff").write_bytes(b"x")
+        # 不在范围内
+        (tmp_path / "e.heic").write_bytes(b"x")
+        (tmp_path / "f.bmp").write_bytes(b"x")
+        (tmp_path / "g.cr3").write_bytes(b"x")
+        names = sorted(p.name for p in isvc.scan_clearable_images(tmp_path))
+        assert names == ["a.jpg", "b.png", "c.webp", "d.tiff"]
+
+    def test_排除隐藏文件(self, tmp_path: Path) -> None:
+        (tmp_path / ".hidden.jpg").write_bytes(b"x")
+        (tmp_path / "v.png").write_bytes(b"x")
+        assert [p.name for p in isvc.scan_clearable_images(tmp_path)] == ["v.png"]
+
+    def test_非递归时忽略子目录(self, tmp_path: Path) -> None:
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "deep.jpg").write_bytes(b"x")
+        assert isvc.scan_clearable_images(tmp_path, recursive=False) == []
+        assert [p.name for p in isvc.scan_clearable_images(tmp_path, recursive=True)] == ["deep.jpg"]
+
+
+def _build_jpeg_with_exif(path: Path, *, comment: bytes | None = None) -> None:
+    from PIL import Image
+
+    exif = Image.Exif()
+    exif[271] = "TestMake"
+    exif[272] = "TestModel"
+    save_kwargs: dict = {"quality": 90, "exif": exif.tobytes()}
+    if comment is not None:
+        save_kwargs["comment"] = comment
+    Image.new("RGB", (32, 32), "red").save(path, "JPEG", **save_kwargs)
+
+
+class TestClearImageMetadata:
+    """clear_image_metadata: 失败 / 边界 / 幂等分支
+
+    遵循 CLAUDE.md 的 0 happy test 原则：覆盖参数错误、文件错误、写失败回滚、
+    幂等返回 False、不同格式的检测分支。
+    """
+
+    def test_文件不存在_FileNotFoundError(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            isvc.clear_image_metadata(tmp_path / "nope.jpg")
+
+    def test_不支持的扩展名_ValueError(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        gif = tmp_path / "x.gif"
+        Image.new("P", (4, 4)).save(gif, "GIF")
+        with pytest.raises(ValueError, match="不支持"):
+            isvc.clear_image_metadata(gif)
+
+    def test_扩展名为_jpg_但实际是_PNG_被拒绝(self, tmp_path: Path) -> None:
+        # 把 PNG 假装成 .jpg：扩展名通过初筛，但 Pillow 解析出 fmt=PNG 也算支持范围内 → 不会拒绝
+        # 改为把 BMP 数据写到 .jpg：BMP 不在支持的真实格式集合中
+        from PIL import Image
+
+        path = tmp_path / "fake.jpg"
+        Image.new("RGB", (8, 8), "blue").save(path, "BMP")
+        with pytest.raises(ValueError, match="不在支持范围"):
+            isvc.clear_image_metadata(path)
+
+    def test_无元数据返回_False_且文件未改动(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        jpg = tmp_path / "plain.jpg"
+        Image.new("RGB", (8, 8), "white").save(jpg, "JPEG", quality=80)
+        before_bytes = jpg.read_bytes()
+        before_mtime = jpg.stat().st_mtime_ns
+
+        assert isvc.clear_image_metadata(jpg) is False
+
+        # 文件应保持原样
+        assert jpg.read_bytes() == before_bytes
+        assert jpg.stat().st_mtime_ns == before_mtime
+
+    def test_JPEG_含_EXIF_擦除后无_exif(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        jpg = tmp_path / "a.jpg"
+        _build_jpeg_with_exif(jpg, comment=b"hello")
+
+        assert isvc.clear_image_metadata(jpg) is True
+
+        with Image.open(jpg) as i:
+            assert not i.info.get("exif")
+            assert i.info.get("comment") is None
+            assert i.size == (32, 32)
+            assert i.format == "JPEG"
+
+    def test_第二次调用幂等_返回_False(self, tmp_path: Path) -> None:
+        jpg = tmp_path / "a.jpg"
+        _build_jpeg_with_exif(jpg)
+        assert isvc.clear_image_metadata(jpg) is True
+        assert isvc.clear_image_metadata(jpg) is False
+
+    def test_PNG_含_text_chunk_被擦除(self, tmp_path: Path) -> None:
+        from PIL import Image, PngImagePlugin
+
+        png = tmp_path / "a.png"
+        info = PngImagePlugin.PngInfo()
+        info.add_text("Author", "Tester")
+        info.add_text("Copyright", "2026")
+        Image.new("RGB", (16, 16), "green").save(png, "PNG", pnginfo=info)
+
+        assert isvc.clear_image_metadata(png) is True
+
+        with Image.open(png) as i:
+            keys = [k for k in i.info if isinstance(k, str)]
+            assert "Author" not in keys
+            assert "Copyright" not in keys
+
+    def test_TIFF_含用户级_tag_被擦除(self, tmp_path: Path) -> None:
+        from PIL import Image
+        from PIL.TiffImagePlugin import ImageFileDirectory_v2
+
+        tif = tmp_path / "a.tif"
+        ifd = ImageFileDirectory_v2()
+        ifd[270] = "Description"
+        ifd[271] = "CamMake"
+        ifd[33432] = "Copyright"
+        Image.new("RGB", (16, 16), "blue").save(tif, "TIFF", tiffinfo=ifd)
+
+        assert isvc.clear_image_metadata(tif) is True
+
+        with Image.open(tif) as i:
+            tags = dict(i.tag_v2)
+        for tag_id in (270, 271, 33432):
+            assert tag_id not in tags, f"用户级 tag {tag_id} 未被擦除"
+
+    def test_TIFF_只含结构_tag_返回_False(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        tif = tmp_path / "plain.tif"
+        Image.new("RGB", (8, 8), "white").save(tif, "TIFF")
+
+        assert isvc.clear_image_metadata(tif) is False
+
+    def test_WebP_含_EXIF_被擦除(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        wp = tmp_path / "a.webp"
+        exif = Image.Exif()
+        exif[271] = "Make"
+        Image.new("RGB", (16, 16), "yellow").save(
+            wp, "WEBP", exif=exif.tobytes(), quality=80
+        )
+
+        assert isvc.clear_image_metadata(wp) is True
+
+        with Image.open(wp) as i:
+            assert not i.info.get("exif")
+            assert i.size == (16, 16)
+
+    def test_编码失败时源文件保持原样_临时文件被清理(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PIL import Image as _Image
+
+        jpg = tmp_path / "a.jpg"
+        _build_jpeg_with_exif(jpg)
+        before_bytes = jpg.read_bytes()
+
+        original_save = _Image.Image.save
+
+        def fake_save(self, fp, *a, **k):
+            # 模拟编码到一半失败
+            if isinstance(fp, str) and fp.endswith(".tmp"):
+                # 先写一点垃圾再失败，确保异常分支会触发清理
+                Path(fp).write_bytes(b"PARTIAL")
+                raise RuntimeError("encoder broke")
+            return original_save(self, fp, *a, **k)
+
+        monkeypatch.setattr(_Image.Image, "save", fake_save)
+
+        with pytest.raises(RuntimeError, match="encoder broke"):
+            isvc.clear_image_metadata(jpg)
+
+        # 源文件不被破坏
+        assert jpg.read_bytes() == before_bytes
+
+        # 临时文件被清理
+        leftovers = [p for p in tmp_path.iterdir() if p.name.startswith(".")]
+        assert leftovers == [], f"未清理的临时文件: {leftovers}"
+
+    def test_Pillow_未安装_ImportError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 给一个真实 JPEG，否则 path.exists() 检查就先失败
+        jpg = tmp_path / "a.jpg"
+        _build_jpeg_with_exif(jpg)
+
+        # exists 检查通过后才会 import PIL，此时拦截 import 即可
+        import builtins as _builtins
+
+        real_import = _builtins.__import__
+
+        def fake_import(name, *a, **k):
+            if name == "PIL":
+                raise ImportError("no PIL")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(_builtins, "__import__", fake_import)
+        with pytest.raises(ImportError):
+            isvc.clear_image_metadata(jpg)
+
+
+class TestHasClearableMetadata:
+    def test_TIFF_仅结构_tag_返回_False(self, tmp_path: Path) -> None:
+        from PIL import Image
+
+        tif = tmp_path / "x.tif"
+        Image.new("RGB", (8, 8), "white").save(tif, "TIFF")
+        with Image.open(tif) as img:
+            assert isvc._has_clearable_metadata(img, "TIFF") is False
+
+    def test_TIFF_用户_tag_返回_True(self, tmp_path: Path) -> None:
+        from PIL import Image
+        from PIL.TiffImagePlugin import ImageFileDirectory_v2
+
+        tif = tmp_path / "x.tif"
+        ifd = ImageFileDirectory_v2()
+        ifd[315] = "Artist"
+        Image.new("RGB", (8, 8), "white").save(tif, "TIFF", tiffinfo=ifd)
+        with Image.open(tif) as img:
+            assert isvc._has_clearable_metadata(img, "TIFF") is True
+
+    def test_PNG_xmp_键也被识别(self, tmp_path: Path) -> None:
+        from PIL import Image, PngImagePlugin
+
+        png = tmp_path / "x.png"
+        info = PngImagePlugin.PngInfo()
+        # iTXt 携带 XMP，键名通常以 XMP/xml 开头
+        info.add_itxt("XML:com.adobe.xmp", "<x:xmpmeta/>")
+        Image.new("RGB", (4, 4)).save(png, "PNG", pnginfo=info)
+        with Image.open(png) as img:
+            assert isvc._has_clearable_metadata(img, "PNG") is True
+
+    def test_getexif_抛异常_TIFF_分支兜底(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from PIL import Image
+
+        tif = tmp_path / "x.tif"
+        Image.new("RGB", (8, 8), "white").save(tif, "TIFF")
+
+        with Image.open(tif) as img:
+            def boom(self):
+                raise RuntimeError("nope")
+
+            monkeypatch.setattr(type(img), "getexif", boom, raising=False)
+            # info 中也无元数据时，TIFF 分支异常应被吞掉，返回 False
+            assert isvc._has_clearable_metadata(img, "TIFF") is False

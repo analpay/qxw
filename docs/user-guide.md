@@ -21,7 +21,7 @@
 |------|------|------|
 | `qxw-llm` | 🤖 AI 对话工具集合（对话 / 提供商管理 / TUI） | ✅ 可用 |
 | `qxw-serve` | 🌐 HTTP 服务集合（gitbook / webtool / file-web / image-web） | ✅ 可用 |
-| `qxw-image` | 📷 图片工具集（RAW 批量转换 / SVG 转 PNG / 调色滤镜 / 自动亮度对比饱和调整） | ✅ 可用 |
+| `qxw-image` | 📷 图片工具集（RAW 批量转换 / SVG 转 PNG / 调色滤镜 / 自动亮度对比饱和调整 / 元数据擦除） | ✅ 可用 |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） | ✅ 可用 |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） | ✅ 可用 |
 | `qxw-math` | 🧮 字符串数学表达式计算（四则 / 次方 / 开方） | ✅ 可用 |
@@ -527,7 +527,7 @@ qxw-serve image-web --no-recursive            # 不递归扫描子目录
 
 ## qxw-image
 
-图片工具集，支持将相机 RAW 文件批量转换为 JPG、将 SVG 批量栅格化为同名 PNG、对已有位图批量套用调色滤镜，以及按预设档位自动调整亮度/对比/饱和度（可选 HDR 观感）。
+图片工具集，支持将相机 RAW 文件批量转换为 JPG、将 SVG 批量栅格化为同名 PNG、对已有位图批量套用调色滤镜、按预设档位自动调整亮度/对比/饱和度（可选 HDR 观感），以及原地擦除位图的 EXIF/IPTC/XMP/ICC 等元数据。
 
 > 图片画廊 HTTP 服务已迁移至 `qxw-serve image-web`。
 
@@ -557,6 +557,9 @@ qxw-image filter -n fuji-cc -d ~/Photos/exports
 
 # 自动调整亮度 / 对比 / 饱和，输出更"舒服"的观感
 qxw-image change -d ~/Photos/exports -i balanced
+
+# 原地擦除位图的 EXIF/IPTC/XMP/ICC 元数据（不可逆，需要二次确认或加 --yes）
+qxw-image clear -d ~/Photos/exports --yes
 ```
 
 ### 子命令说明
@@ -567,6 +570,7 @@ qxw-image change -d ~/Photos/exports -i balanced
 | `svg`    | 将 SVG 批量栅格化为同目录下的同名 PNG |
 | `filter` | 对已有位图（JPG/PNG/TIFF/HEIC 等）批量套用调色滤镜 |
 | `change` | 对已有位图按预设档位做自动亮度 / 对比 / 饱和调整（可选 HDR 观感），详见下文 |
+| `clear`  | **原地擦除**位图的 EXIF / IPTC / XMP / ICC 等元数据，详见下文 |
 
 ### raw 参数说明
 
@@ -663,6 +667,76 @@ qxw-image change -q 95 -j 8 --overwrite
 ```
 
 > 不支持 RAW 输入。若需要对 RAW 做"解码 + 自动增强"，当前做法是先跑 `qxw-image raw` 解码成 JPG，再跑 `qxw-image change`。
+
+### clear 参数说明
+
+`clear` 子命令**原地覆盖**源文件，擦除其 EXIF / IPTC / XMP / ICC profile 等容器级元数据，像素数据保留。常见使用场景：发布到公开平台前去掉 GPS / 拍摄设备型号 / 编辑历史 / 版权水印，或者批量"消毒"一组下载图片。
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--dir` | `-d` | `.` | 输入目录 |
+| `--recursive` | `-r` | false | 是否递归处理子目录 |
+| `--yes` | `-y` | false | 跳过二次确认。**原地覆盖不可逆**，默认会要求用户输入 yes 后再继续 |
+| `--workers` | `-j` | `min(CPU核数, 4)` | 并行处理线程数，`-j 1` 表示串行 |
+
+支持的输入格式：JPG / JPEG / PNG / TIFF / TIF / WebP。不支持 HEIC/HEIF（libheif 的 HEIC 编码依赖于带 x265 的构建，环境差异大）。如需对 HEIC 去元数据，请先用其它工具转 JPEG 再处理。
+
+#### 擦除范围
+
+容器级元数据（不动像素）：
+
+- **EXIF**：拍摄参数 / GPS / 相机型号 / orientation 等
+- **IPTC**：版权 / 关键字
+- **XMP**：Adobe / 编辑历史
+- **ICC profile**：色彩配置文件
+- **JPEG COM 注释 / PNG text chunk**（Author / Copyright / Description / Software / 自定义文本等）
+
+#### 画质策略
+
+| 格式 | 策略 | 是否无损 |
+|------|------|---------|
+| JPEG | `quality="keep"` 沿用原始量化表与 DCT 系数，仅清掉 APP1 (EXIF/XMP) / APP2 (ICC) / APP13 (IPTC) / COM 等 marker | ✅ 真正无损 |
+| PNG  | 重新编码（不写 text/iTXt/zTXt/eXIf/iCCP chunk） | ✅ PNG 本身无损 |
+| TIFF | 沿用原压缩方式重新编码，删除 user-metadata tag | ✅ 取决于压缩 |
+| WebP | 强制 `lossless=True` 重新编码（避免重新压缩塌掉画质） | ✅ 像素无损 |
+
+> ⚠️ **WebP 体积警告**：原本是有损 WebP 的文件经过 lossless 重编码后体积可能显著上涨（lossless WebP 通常比 lossy 大 3-10 倍）。这是无损重写元数据的代价。
+
+#### 安全保证
+
+- 采用 *临时文件 + `os.replace`* 实现原子替换：编码失败时源文件保持原样不被破坏。
+- 文件本来就没有任何元数据时直接跳过、不重写源文件（mtime 不变）。
+- 默认会输出"即将覆盖 N 个文件"的二次确认提示，必须输入 yes 后才继续；用 `--yes` 跳过。
+
+#### 使用示例
+
+```bash
+# 擦除当前目录所有支持的位图（会先要求二次确认）
+qxw-image clear
+
+# 递归处理子目录，跳过二次确认
+qxw-image clear -d ~/Photos/exports -r --yes
+
+# 8 线程并行处理
+qxw-image clear -d ~/Photos -j 8 --yes
+
+# 串行处理（更易调试）
+qxw-image clear -d ~/Photos -j 1 --yes
+```
+
+#### 输出统计
+
+执行完成后会打印三类计数：
+
+- `已清理`：实际改写了的文件数
+- `无元数据`：本来就没有 EXIF/XMP/IPTC/ICC，未做任何改动
+- `失败`：编码失败的文件数（源文件保持原样）
+
+#### 已知限制
+
+- **不支持 HEIC/HEIF**：libheif 的 HEIC 编码依赖带 x265 的构建，环境差异大，暂不纳入。
+- **不可逆**：本子命令是原地覆盖，成功擦除后无法找回原 EXIF。请提前备份重要照片。
+- **TIFF 仅清"用户级 tag"**：结构性 tag（ImageWidth / Compression / StripOffsets 等）必须保留，否则文件无法解码。
 
 ### svg 参数说明
 

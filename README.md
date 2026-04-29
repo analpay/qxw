@@ -79,7 +79,7 @@ qxw hello --name 开发者
 |------|------|
 | `qxw-llm` | 🤖 AI 对话工具集合（对话 / 提供商管理 / TUI） |
 | `qxw-serve` | 🌐 HTTP 服务集合（gitbook 预览 / 开发者工具 / 文件共享 / 图片画廊） |
-| `qxw-image` | 📷 图片工具集（RAW 批量转 JPG / SVG 转 PNG / 调色滤镜 / 自动亮度对比饱和调整） |
+| `qxw-image` | 📷 图片工具集（RAW 批量转 JPG / SVG 转 PNG / 调色滤镜 / 自动亮度对比饱和调整 / 元数据擦除） |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） |
 | `qxw-str` | 🔤 字符串工具集（长度统计等） |
 | `qxw-math` | 🧮 字符串数学表达式计算（四则 / 次方 / 开方） |

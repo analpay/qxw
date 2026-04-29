@@ -44,6 +44,7 @@ class TestMainGroup:
         assert "raw" in out
         assert "svg" in out
         assert "filter" in out
+        assert "clear" in out
 
 
 class TestRequireHelpers:
@@ -449,3 +450,167 @@ class TestFilterCommandSuccess:
         assert code == 0
         # 所有被扫到的文件都位于 out_dir，应该被跳过
         assert "1 跳过" in out or "未找到" in out
+
+
+class TestClearCommand:
+    """qxw-image clear: 失败 / 边界 / 异常分支"""
+
+    def test_Pillow_缺失(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _block_import(monkeypatch, "PIL")
+        code, out = _run(["clear", "-d", str(tmp_path), "--yes"])
+        assert code == 1
+        assert "Pillow" in out
+
+    def test_目录不存在(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        code, _ = _run(["clear", "-d", str(tmp_path / "nope"), "--yes"])
+        assert code != 0
+
+    def test_空目录_无位图(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        # 空目录在二次确认前就提前返回（因为没找到文件）
+        code, out = _run(["clear", "-d", str(tmp_path)])
+        assert code == 0
+        assert "未找到" in out
+
+    def test_用户在确认时拒绝(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        (tmp_path / "a.jpg").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        called = {"n": 0}
+
+        def fake_clear(p):
+            called["n"] += 1
+            return True
+
+        monkeypatch.setattr(isvc, "clear_image_metadata", fake_clear)
+
+        runner = CliRunner()
+        # 模拟用户输入 n
+        result = runner.invoke(
+            image_mod.main, ["clear", "-d", str(tmp_path)], input="n\n"
+        )
+        assert result.exit_code == 0
+        assert "已取消" in result.output
+        assert called["n"] == 0
+
+    def test_yes_跳过确认_正常路径(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        (tmp_path / "b.png").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake_clear(p):
+            return True  # 都返回"已改写"
+
+        monkeypatch.setattr(isvc, "clear_image_metadata", fake_clear)
+        code, out = _run(["clear", "-d", str(tmp_path), "--yes", "-j", "1"])
+        assert code == 0
+        assert "2 已清理" in out
+
+    def test_部分文件无元数据_统计为未改动(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        (tmp_path / "b.png").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake_clear(p):
+            return p.suffix == ".jpg"  # 只有 jpg 真正改动
+
+        monkeypatch.setattr(isvc, "clear_image_metadata", fake_clear)
+        code, out = _run(["clear", "-d", str(tmp_path), "--yes", "-j", "1"])
+        assert code == 0
+        assert "1 已清理" in out
+        assert "1 无元数据" in out
+
+    def test_部分文件失败_统计为失败(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        (tmp_path / "a.jpg").write_bytes(b"x")
+        (tmp_path / "b.png").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake_clear(p):
+            if p.suffix == ".png":
+                raise RuntimeError("encoder broke")
+            return True
+
+        monkeypatch.setattr(isvc, "clear_image_metadata", fake_clear)
+        code, out = _run(["clear", "-d", str(tmp_path), "--yes", "-j", "1"])
+        assert code == 0
+        assert "1 已清理" in out
+        assert "1 失败" in out
+
+    def test_并行路径(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 走 ThreadPoolExecutor 分支：>1 文件 + workers>1
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        for i in range(3):
+            (tmp_path / f"a{i}.jpg").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        def fake_clear(p):
+            return True
+
+        monkeypatch.setattr(isvc, "clear_image_metadata", fake_clear)
+        code, out = _run(["clear", "-d", str(tmp_path), "--yes", "-j", "4"])
+        assert code == 0
+        assert "3 已清理" in out
+
+    def test_QxwError_退出码(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def raise_err():
+            raise QxwError("clear 错", exit_code=7)
+
+        monkeypatch.setattr(image_mod, "_require_pillow", raise_err)
+        code, out = _run(["clear", "--yes"])
+        assert code == 7
+
+    def test_KeyboardInterrupt_退出码_130(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raise_kb():
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(image_mod, "_require_pillow", raise_kb)
+        code, _ = _run(["clear", "--yes"])
+        assert code == 130
+
+    def test_通用异常_退出码_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def raise_any():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(image_mod, "_require_pillow", raise_any)
+        code, _ = _run(["clear", "--yes"])
+        assert code == 1
+
+    def test_workers_负数自动钳到_1(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(image_mod, "_require_pillow", lambda: None)
+        (tmp_path / "a.jpg").write_bytes(b"x")
+
+        from qxw.library.services import image_service as isvc
+
+        monkeypatch.setattr(isvc, "clear_image_metadata", lambda p: True)
+        # workers=-5 应被钳到 1
+        code, out = _run(["clear", "-d", str(tmp_path), "--yes", "-j", "-5"])
+        assert code == 0
+        assert "并行线程: 1" in out

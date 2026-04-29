@@ -12,6 +12,8 @@
     qxw-image filter --list               # 列出所有已注册的调色滤镜
     qxw-image change -d imgs              # 自动亮度/对比/饱和调整 + HDR 观感（HDR 默认开启）
     qxw-image change -d imgs --no-hdr     # 关闭 HDR 局部 tone mapping
+    qxw-image clear -d imgs               # 原地擦除位图的 EXIF/IPTC/XMP/ICC 等元数据
+    qxw-image clear -d imgs -r --yes      # 递归擦除并跳过二次确认
     qxw-image --help                      # 查看帮助
 """
 
@@ -949,6 +951,182 @@ def change_command(
         console.print(f"✅ 增强完成: [green]{success_count}[/] 成功", end="")
         if skip_count:
             console.print(f"，[yellow]{skip_count}[/] 跳过（已存在或输出即自身）", end="")
+        if fail_count:
+            console.print(f"，[red]{fail_count}[/] 失败", end="")
+        console.print()
+
+    except click.UsageError:
+        raise
+    except QxwError as e:
+        logger.error("命令执行失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command(
+    name="clear",
+    help="原地擦除位图的 EXIF/IPTC/XMP/ICC 等元数据（JPEG/PNG/TIFF/WebP）",
+)
+@click.option("--dir", "-d", "directory", default=".", show_default=True, help="输入目录")
+@click.option("--recursive", "-r", is_flag=True, default=False, help="递归处理子目录")
+@click.option(
+    "--yes",
+    "-y",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help="跳过二次确认。原地覆盖是不可逆的，默认会提示用户输入 yes 后才继续",
+)
+@click.option(
+    "--workers",
+    "-j",
+    default=None,
+    type=int,
+    help="并行处理线程数（默认 min(CPU 核数, 4)；-j 1 表示串行）",
+)
+def clear_command(
+    directory: str,
+    recursive: bool,
+    assume_yes: bool,
+    workers: int | None,
+) -> None:
+    """原地擦除位图的元数据
+
+    \b
+    擦除范围（容器级元数据，像素数据保留）：
+      EXIF（拍摄参数 / GPS / 相机型号 / orientation 等）
+      IPTC（版权 / 关键字）
+      XMP（Adobe / 编辑历史）
+      ICC profile（色彩配置文件）
+      JPEG COM 注释 / PNG text chunk 等
+
+    \b
+    画质策略：
+      JPEG    quality="keep" 沿用原始 DCT，真正无损
+      PNG     重新编码（PNG 本身无损）
+      TIFF    沿用原压缩方式，重新编码（TIFF 本身可无损）
+      WebP    强制 lossless=True 重新编码（避免重新压缩塌掉画质，
+              但原本是有损 WebP 的文件可能体积明显变大）
+
+    \b
+    注意：
+      ⚠️  本子命令是**原地覆盖**，会直接修改源文件。
+          采用临时文件 + 原子 rename，编码失败时源文件保持原样不变。
+          但成功擦除后无法找回原 EXIF。请提前备份重要照片。
+      ❌  不支持 HEIC/HEIF（libheif 编码依赖 x265 构建，环境差异大）。
+          如需处理 HEIC，请先用 qxw-image filter 或其它工具转 JPEG。
+
+    \b
+    支持格式：
+      JPG, JPEG, PNG, TIFF, TIF, WebP
+
+    \b
+    示例:
+        qxw-image clear                          # 当前目录所有支持的位图
+        qxw-image clear -d ~/Photos -r           # 递归处理子目录
+        qxw-image clear --yes                    # 跳过二次确认，直接覆盖
+        qxw-image clear -d imgs -j 8             # 8 线程并行处理
+    """
+    try:
+        _require_pillow()
+
+        from qxw.library.services.image_service import (
+            CLEARABLE_METADATA_EXTENSIONS,
+            clear_image_metadata,
+            scan_clearable_images,
+        )
+
+        dir_path = Path(directory).resolve()
+        if not dir_path.is_dir():
+            raise click.BadParameter(f"目录不存在: {directory}")
+
+        if workers is None:
+            workers = min(os.cpu_count() or 4, 4)
+        workers = max(1, workers)
+
+        console.print(f"🧹 [bold]QXW Image Metadata Cleaner[/] v{__version__}")
+        console.print(f"📁 源目录: [cyan]{dir_path}[/]")
+        console.print(f"🔁 递归子目录: {'是' if recursive else '否'}")
+        console.print(
+            f"📋 支持格式: {', '.join(sorted(CLEARABLE_METADATA_EXTENSIONS))}"
+        )
+        console.print(f"🧵 并行线程: {workers}")
+        console.print()
+
+        image_files = scan_clearable_images(dir_path, recursive=recursive)
+        if not image_files:
+            console.print("📭 未找到可擦除元数据的位图文件")
+            return
+
+        console.print(f"🔍 找到 [bold]{len(image_files)}[/] 个位图文件\n")
+
+        if not assume_yes:
+            console.print(
+                "[yellow]⚠️  即将原地覆盖以上文件、擦除其 EXIF/IPTC/XMP/ICC 等元数据，"
+                "此操作不可逆。[/]"
+            )
+            confirmed = click.confirm("是否继续？", default=False)
+            if not confirmed:
+                console.print("已取消")
+                return
+
+        success_count = 0       # 实际改写
+        unchanged_count = 0     # 本来就没有元数据，跳过写入
+        fail_count = 0
+
+        def _run_one(src: Path) -> tuple[Path, bool, Exception | None]:
+            try:
+                changed = clear_image_metadata(src)
+                return src, changed, None
+            except Exception as e:
+                return src, False, e
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            TimeRemainingColumn(),
+            console=console,
+        ) as progress:
+            task_id = progress.add_task("擦除中...", total=len(image_files))
+
+            if workers == 1 or len(image_files) <= 1:
+                for src in image_files:
+                    src, changed, err = _run_one(src)
+                    if err is not None:
+                        logger.warning("擦除失败 %s: %s", src.name, err)
+                        fail_count += 1
+                    elif changed:
+                        success_count += 1
+                    else:
+                        unchanged_count += 1
+                    progress.advance(task_id)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = [pool.submit(_run_one, src) for src in image_files]
+                    for future in as_completed(futures):
+                        src, changed, err = future.result()
+                        if err is not None:
+                            logger.warning("擦除失败 %s: %s", src.name, err)
+                            fail_count += 1
+                        elif changed:
+                            success_count += 1
+                        else:
+                            unchanged_count += 1
+                        progress.advance(task_id)
+
+        console.print()
+        console.print(f"✅ 擦除完成: [green]{success_count}[/] 已清理", end="")
+        if unchanged_count:
+            console.print(f"，[cyan]{unchanged_count}[/] 无元数据（未改动）", end="")
         if fail_count:
             console.print(f"，[red]{fail_count}[/] 失败", end="")
         console.print()

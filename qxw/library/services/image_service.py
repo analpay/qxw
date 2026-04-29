@@ -54,6 +54,14 @@ FILTERABLE_IMAGE_EXTENSIONS = frozenset({
     ".tiff", ".tif", ".heic", ".heif",
 })
 
+# `qxw-image clear` 子命令可原地擦除元数据的位图格式
+# JPEG 通过 quality="keep" 真正无损；PNG/TIFF 重新编码但格式本身无损；
+# WebP 强制走 lossless 重编码（避免 EXIF 撕掉的同时把图压花）。
+# 不含 HEIC/HEIF：编码依赖 libheif 的 x265 构建，环境差异大，先不纳入。
+CLEARABLE_METADATA_EXTENSIONS = frozenset({
+    ".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp",
+})
+
 # SVG 矢量图格式
 SVG_EXTENSIONS = frozenset({".svg"})
 
@@ -207,6 +215,24 @@ def scan_filterable_images(directory: Path, recursive: bool = False) -> list[Pat
         f for f in all_files
         if f.is_file()
         and f.suffix.lower() in FILTERABLE_IMAGE_EXTENSIONS
+        and not f.name.startswith(".")
+    ]
+    return sorted(files, key=lambda x: x.name.lower())
+
+
+def scan_clearable_images(directory: Path, recursive: bool = False) -> list[Path]:
+    """扫描目录获取所有支持原地擦除元数据的位图文件
+
+    仅返回 :data:`CLEARABLE_METADATA_EXTENSIONS` 列出的格式（JPEG/PNG/TIFF/WebP）。
+    HEIC/HEIF 不在范围内：libheif 的 HEIC 编码依赖于带 x265 的构建，环境差异大，
+    暂不纳入；如需对 HEIC 去元数据，请先用其它工具转 JPEG 再处理。
+    """
+    directory = directory.resolve()
+    all_files = list(directory.rglob("*")) if recursive else list(directory.iterdir())
+    files = [
+        f for f in all_files
+        if f.is_file()
+        and f.suffix.lower() in CLEARABLE_METADATA_EXTENSIONS
         and not f.name.startswith(".")
     ]
     return sorted(files, key=lambda x: x.name.lower())
@@ -472,6 +498,179 @@ def _reset_exif_orientation(exif_bytes: bytes) -> bytes:
     except Exception as e:  # noqa: BLE001
         logger.warning("EXIF orientation 重写失败，保留原始 EXIF: %s", e)
         return exif_bytes
+
+
+# ============================================================
+# 擦除图片元数据 (EXIF / IPTC / XMP / ICC)
+# ============================================================
+
+
+# Pillow 在 image.info 中常见的容器级元数据键
+_METADATA_INFO_KEYS = (
+    "exif", "icc_profile", "xmp", "comment",
+    "photoshop", "iptc", "Raw profile type exif",
+    "Raw profile type xmp", "Raw profile type iptc",
+)
+
+
+# TIFF 中"用户级"元数据的 tag id —— 与编码必须的结构性 tag（256 宽 / 257 高 /
+# 258 BitsPerSample / 259 Compression / 262 PhotoMetric / 273 StripOffsets /
+# 277 SamplesPerPixel / 278 RowsPerStrip / 279 StripByteCounts / 282/283 分辨率 /
+# 284 PlanarConfiguration）区分开。命中其中任一即视为含可擦除元数据。
+_TIFF_USER_METADATA_TAGS = frozenset({
+    269,    # DocumentName
+    270,    # ImageDescription
+    271,    # Make
+    272,    # Model
+    305,    # Software
+    306,    # DateTime
+    315,    # Artist
+    316,    # HostComputer
+    700,    # XMP
+    33432,  # Copyright
+    33723,  # IPTC
+    34377,  # Photoshop
+    34665,  # ExifIFD
+    34675,  # ICCProfile
+    34853,  # GPSInfo
+})
+
+
+def _has_clearable_metadata(img: "Image.Image", fmt: str) -> bool:
+    """判断图像实例上是否含有需要擦除的元数据
+
+    检查范围因格式而异：
+
+    - 通用：``image.info`` 中的容器级键（exif / icc_profile / xmp / iptc 等）。
+    - PNG：还要把文本类 chunk（tEXt / iTXt / zTXt 解码出来的字符串键值对）算进去。
+    - TIFF：``info["exif"]`` 不可靠（Pillow 把 EXIF 烫平到 native tag 里），
+      改用 :py:meth:`Image.getexif` 看是否含 :data:`_TIFF_USER_METADATA_TAGS`
+      中的"用户级" tag。
+    """
+    info = img.info
+    if any(k in info for k in _METADATA_INFO_KEYS):
+        return True
+    if fmt == "PNG":
+        text_keys = {
+            "Description", "Author", "Copyright", "Software",
+            "Title", "Comment", "Source", "Disclaimer", "Warning",
+            "Creation Time", "parameters",
+        }
+        for k in info:
+            if isinstance(k, str) and (k in text_keys or k.lower().startswith("xmp")):
+                return True
+    if fmt == "TIFF":
+        try:
+            exif = img.getexif()
+        except Exception:  # noqa: BLE001
+            exif = None
+        if exif:
+            for tag_id in exif:
+                if tag_id in _TIFF_USER_METADATA_TAGS:
+                    return True
+    return False
+
+
+def clear_image_metadata(path: Path) -> bool:
+    """原地擦除图片的 EXIF / IPTC / XMP / ICC 等容器级元数据
+
+    像素数据保留：
+
+    - **JPEG**：``quality="keep"`` 沿用原始量化表与 DCT 系数，真正无损；
+      只是把 APP1 (EXIF/XMP)、APP2 (ICC)、APP13 (IPTC)、COM (注释) 等
+      marker 清掉，重新封装容器。
+    - **PNG**：重新编码（PNG 本身无损），text/iTXt/zTXt/eXIf/iCCP chunk 不再写入。
+    - **TIFF**：重新编码，沿用原压缩方式；EXIF/XMP/ICC tag 不再写入。
+    - **WebP**：强制走 ``lossless=True`` 重新编码（避免重新压缩造成画质塌掉），
+      EXIF/XMP/ICC chunk 不再写入。注意：原本是有损 WebP 的文件体积可能显著上涨。
+
+    采用 *临时文件 + ``os.replace``* 实现：编码失败时源文件保持原样不被破坏。
+
+    Args:
+        path: 要擦除元数据的图片绝对路径
+
+    Returns:
+        ``True`` 实际改写了文件；``False`` 元数据本来就为空、未做任何改动
+        （此时源文件 mtime / 内容均不变）
+
+    Raises:
+        FileNotFoundError: 源文件不存在
+        ValueError: 文件后缀不在 :data:`CLEARABLE_METADATA_EXTENSIONS` 中
+        ImportError: Pillow 未安装
+        Exception: 解码 / 编码失败（此时源文件保持原样，临时文件已被清理）
+    """
+    import os
+
+    from PIL import Image
+
+    if not path.exists():
+        raise FileNotFoundError(f"源文件不存在: {path}")
+
+    suffix = path.suffix.lower()
+    if suffix not in CLEARABLE_METADATA_EXTENSIONS:
+        raise ValueError(
+            f"不支持原地擦除元数据的格式: {suffix!r}。"
+            f"支持: {', '.join(sorted(CLEARABLE_METADATA_EXTENSIONS))}"
+        )
+
+    with Image.open(path) as img:
+        fmt = (img.format or "").upper()
+        # 容错：扩展名与实际格式不一致时，按真实格式走分支
+        if fmt not in ("JPEG", "PNG", "TIFF", "WEBP", "MPO"):
+            raise ValueError(
+                f"Pillow 解析到的实际格式不在支持范围: {fmt!r}（文件: {path.name}）"
+            )
+
+        if not _has_clearable_metadata(img, fmt):
+            return False
+
+        # 必须先 load() 把像素数据从文件读出，避免后续 os.replace 破坏未读完的句柄
+        img.load()
+
+        # 把 Pillow encoder 会自动透传的元数据键剔除
+        for k in _METADATA_INFO_KEYS:
+            img.info.pop(k, None)
+
+        save_kwargs: dict = {}
+        save_format = fmt
+        if fmt in ("JPEG", "MPO"):
+            # MPO（多帧 JPEG，常见于 3D 照片）按 JPEG 单帧重新封装即可
+            save_format = "JPEG"
+            save_kwargs.update({
+                "quality": "keep",
+                "exif": b"",
+                "icc_profile": b"",
+            })
+        elif fmt == "PNG":
+            # 不传 pnginfo —— 文本 chunk 不会被写入；icc_profile 也不再传
+            save_kwargs["icc_profile"] = b""
+        elif fmt == "TIFF":
+            # 沿用原始压缩；EXIF tag 不写入
+            compression = img.info.get("compression")
+            if compression:
+                save_kwargs["compression"] = compression
+        elif fmt == "WEBP":
+            save_kwargs.update({
+                "lossless": True,
+                "quality": 100,
+                "exif": b"",
+                "xmp": b"",
+                "icc_profile": b"",
+            })
+
+        # 临时文件落在源文件同目录，确保 os.replace 在同设备上原子完成
+        tmp_path = path.with_name(f".{path.name}.qxw-clear.{os.getpid()}.tmp")
+        try:
+            img.save(str(tmp_path), format=save_format, **save_kwargs)
+        except Exception:
+            try:
+                tmp_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+
+    os.replace(str(tmp_path), str(path))
+    return True
 
 
 # ============================================================
