@@ -12,12 +12,13 @@
 > **每次改动代码都必须同步更新相应的文档。**
 
 具体要求：
-1. 新增命令：更新 `docs/user-guide.md`（使用手册）和 `docs/quick-start.md`（快速开始）
+1. 新增命令：更新 `docs/user-guide.md`（使用手册）和 `docs/quick-start.md`（快速开始），同时新建 `skills/<命令名>/SKILL.md`
 2. 修改配置：更新 `docs/operations.md`（运维手册），同时更新 `qxw/config/setting.json.example`
 3. 修改 API/接口：更新 `docs/development.md`（开发手册）
 4. 修复问题：如果是常见问题，更新 `docs/faq.md`
 5. 新增功能规划：更新 `docs/planning.md`（规划文档）
 6. 重大变更：更新 `README.md`
+7. 修改命令子命令 / 参数 / 默认值 / 退出码：同步更新对应 `skills/<命令名>/SKILL.md`
 
 ### 目录结构规范
 
@@ -31,6 +32,8 @@ qxw/
 │   ├── models/    # ORM 映射层 (SQLAlchemy)
 │   ├── managers/  # 管理器层
 │   └── services/  # 业务逻辑
+skills/            # 给 LLM / Agent 触发用的 skill 文件，每个命令一个目录
+└── <命令名>/SKILL.md
 ```
 
 ### 命令开发规范
@@ -41,6 +44,69 @@ qxw/
 4. **Help 信息**: 每个命令必须包含完整的 `--help` 信息
 5. **TUI 模式**: 使用 Textual 框架实现交互界面
 6. **数据模型**: 使用 Pydantic 实体类进行强类型约束
+7. **Skill 文件**: 每个命令必须在 `skills/<命令名>/SKILL.md` 提供对应的 skill，详见下文《Skill 规范》
+
+### Skill 规范
+
+> **每个 `qxw-*` 命令（含 `qxw` 主命令组）都必须在 `skills/` 下有对应的 `SKILL.md`，作为 LLM / Agent 的触发摘要。**
+
+#### 目录与命名
+
+```
+skills/
+├── README.md                  # 总览 + skill 与命令映射表，新增/删除命令时同步更新
+├── qxw/SKILL.md               # 主命令组：list / hello / sbdqf / completion
+├── qxw-llm/SKILL.md           # 一个命令一个目录，目录名 = 命令名
+├── qxw-serve/SKILL.md
+├── qxw-image/SKILL.md
+├── qxw-markdown/SKILL.md
+├── qxw-str/SKILL.md
+├── qxw-math/SKILL.md
+└── qxw-git/SKILL.md
+```
+
+- 目录名与 `pyproject.toml` 的 `[project.scripts]` 注册名严格一致
+- 每个目录下入口文件固定叫 `SKILL.md`（大写），方便工具检索
+- 如需附带脚本 / 参考文档，按 skill 通用约定放到同目录的 `scripts/` / `references/` / `assets/` 子目录
+
+#### Frontmatter 必填字段
+
+```markdown
+---
+name: <命令名>
+description: <一句话讲做什么 + 子命令枚举 + 典型用户口语化触发短语 + 命令名直呼>
+---
+```
+
+要点：
+- `name` 与目录名一致
+- `description` 必须**故意写得"够触发"**：除了能力描述，还要列举用户可能用的口语化说法（"把 RAW 转 JPG"、"算根号 2"、"局域网共享文件"等），并在末尾保留命令名直呼，方便用户直接念命令名时也能命中
+- 单条 description 控制在 1500 字以内，超长会被工具截断
+
+#### 正文结构（推荐顺序）
+
+1. **子命令一览**（表格：子命令 / 用途）
+2. **每个子命令的基本用法**（带 ` ```bash ` 代码块的真实命令示例）
+3. **参数表**（参数 / 缩写 / 默认值 / 说明）
+4. **关键行为约束**：默认值含义、自动行为、互斥参数、依赖
+5. **退出码表**（如适用）：与命令实际退出码完全一致
+6. **常见踩坑**：用户最容易踩的坑 + 修复指引
+
+正文必须做到：**LLM 不查 docs 也能直接拼出可执行命令**，因此参数表与默认值要写死，不能留"详见手册"。
+
+#### 与 `docs/` 的分工
+
+- `docs/user-guide.md`：**给人读的**完整使用手册，强调结构与详尽
+- `skills/<cmd>/SKILL.md`：**给 LLM 读的**触发摘要，强调描述里的触发短语 + 正文里的可执行命令
+- 二者分歧时**以 `docs/` 为准**，skill 仅是它的可触发摘要；改动时优先改 `docs/`，再同步 skill
+
+#### 维护规则
+
+- **新增 `qxw-*` 命令** → 同时新建 `skills/<命令名>/SKILL.md`，并更新 `skills/README.md` 的映射表
+- **新增子命令 / 参数 / 默认值变化** → 同步更新对应 SKILL.md 的子命令一览、参数表、示例
+- **修改退出码 / 错误码** → 同步更新对应 SKILL.md 的退出码表
+- **删除命令** → 删除对应 skill 目录，同步删除 `skills/README.md` 映射表中的行
+- **修改命令名** → skill 目录、`name` frontmatter、映射表三处一起改
 
 ### 错误处理规范
 
