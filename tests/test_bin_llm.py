@@ -869,3 +869,121 @@ class TestChatCommandOptionsOverride:
         assert captured["max_tokens"] == 100
         assert captured["top_p"] == 0.9
         assert captured["sys"] == "你是助手"
+
+
+class TestFetchCommand:
+    """qxw-llm fetch 命令分支覆盖
+
+    重点覆盖：
+    - 缺少 patterns 参数 → 退出码 6
+    - service 抛 QxwError → 退出码透传
+    - KeyboardInterrupt / 未预期 Exception
+    - 正常路径：参数透传到 service、文本汇总输出
+    """
+
+    def test_缺少_patterns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        code, out = _run(["fetch", "org/name"])
+        assert code == 6
+        assert "至少需要" in out
+
+    def test_QxwError_退出码透传(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_fetch_service as svc
+
+        def boom(**kwargs):
+            raise QxwError("仓库不存在", exit_code=5)
+
+        monkeypatch.setattr(svc, "fetch_files", boom)
+        code, out = _run(["fetch", "org/name", "config.json"])
+        assert code == 5
+        assert "仓库不存在" in out
+
+    def test_KeyboardInterrupt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_fetch_service as svc
+
+        def boom(**kwargs):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(svc, "fetch_files", boom)
+        code, out = _run(["fetch", "org/name", "config.json"])
+        assert code == 130
+        assert "已取消" in out
+
+    def test_未预期_Exception(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_fetch_service as svc
+
+        def boom(**kwargs):
+            raise RuntimeError("oops")
+
+        monkeypatch.setattr(svc, "fetch_files", boom)
+        code, out = _run(["fetch", "org/name", "config.json"])
+        assert code == 1
+        assert "未预期" in out
+
+    def test_正常路径_参数透传_汇总输出(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_fetch_service as svc
+
+        captured: dict = {}
+
+        def fake_fetch(**kwargs):
+            captured.update(kwargs)
+            # 触发 file lifecycle 让 progress 状态机走全
+            kwargs["on_file_start"]("config.json", 1, 1)
+            kwargs["progress_cb"](100, 100)
+            kwargs["on_file_done"]("config.json", 1, 1)
+            return svc.FetchResult(
+                repo="org/name",
+                source="modelscope",
+                revision="v1",
+                output_dir=tmp_path,
+                files=(svc.FetchedFile(repo_path="config.json", local_path=tmp_path / "config.json", size=100),),
+            )
+
+        monkeypatch.setattr(svc, "fetch_files", fake_fetch)
+        code, out = _run(
+            [
+                "fetch",
+                "Org/Name",
+                "configuration_*.py",
+                "--source",
+                "modelscope",
+                "-r",
+                "v1",
+                "-o",
+                str(tmp_path),
+                "-k",
+                "secret",
+                "--timeout",
+                "10",
+            ]
+        )
+        assert code == 0
+        assert captured["repo"] == "Org/Name"
+        assert captured["patterns"] == ["configuration_*.py"]
+        assert captured["source"] == "modelscope"
+        assert captured["revision"] == "v1"
+        assert str(tmp_path) == str(captured["output"])
+        assert captured["token"] == "secret"
+        assert captured["timeout"] == 10.0
+        assert "已下载 1 个文件" in out
+        assert "config.json" in out
+
+    def test_progress_无_Content_Length_收尾(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """on_file_done 在 total=None 时按已写入字节数补齐 total，避免进度条卡住"""
+        from qxw.library.services import llm_fetch_service as svc
+
+        def fake_fetch(**kwargs):
+            kwargs["on_file_start"]("a.bin", 1, 1)
+            # 模拟服务端未返回 Content-Length：total = 0
+            kwargs["progress_cb"](42, 0)
+            kwargs["on_file_done"]("a.bin", 1, 1)
+            return svc.FetchResult(
+                repo="o/n",
+                source="huggingface",
+                revision="main",
+                output_dir=tmp_path,
+                files=(svc.FetchedFile(repo_path="a.bin", local_path=tmp_path / "a.bin", size=42),),
+            )
+
+        monkeypatch.setattr(svc, "fetch_files", fake_fetch)
+        code, _ = _run(["fetch", "o/n", "a.bin", "-o", str(tmp_path)])
+        assert code == 0

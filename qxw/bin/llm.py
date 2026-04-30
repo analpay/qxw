@@ -15,15 +15,25 @@ QXW AI 对话工具统一入口（合并自 qxw-chat / qxw-chat-provider）。
     qxw-llm provider ping [name]      # 测试提供商连接
     qxw-llm provider ping-all         # 测试全部提供商连接
     qxw-llm tui                       # 提供商 TUI 管理界面
+    qxw-llm fetch <repo> <files...>   # 从 HF / ModelScope 拉取仓库文件
 """
 
 import sys
 import time
+from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.table import Table
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -34,6 +44,7 @@ from qxw import __version__
 from qxw.library.base.exceptions import QxwError
 from qxw.library.base.logger import get_logger
 from qxw.library.managers.chat_provider_manager import SUPPORTED_PROVIDER_TYPES, ChatProviderManager
+from qxw.library.services import llm_fetch_service
 from qxw.library.services.chat_service import ChatParams, ChatService, ChatSession
 
 logger = get_logger("qxw.llm")
@@ -886,6 +897,147 @@ def ping_all_providers() -> None:
     except QxwError as e:
         click.echo(f"错误: {e.message}", err=True)
         sys.exit(e.exit_code)
+
+
+# ------------------------------------------------------------
+# qxw-llm fetch
+# ------------------------------------------------------------
+
+
+def _human_size(n: int) -> str:
+    """把字节数渲染为带单位的可读字符串"""
+    units = ("B", "KB", "MB", "GB", "TB")
+    size = float(n)
+    idx = 0
+    while size >= 1024 and idx < len(units) - 1:
+        size /= 1024
+        idx += 1
+    return f"{size:.2f} {units[idx]}" if idx else f"{int(size)} {units[idx]}"
+
+
+@main.command(
+    name="fetch",
+    help="从 HuggingFace / ModelScope 拉取仓库内文件（支持精确名与 glob 表达式）",
+    epilog=(
+        "示例: qxw-llm fetch bert-base/uncased 'config.json' 'tokenizer*.json'\n"
+        "      qxw-llm fetch Qwen/Qwen2-7B 'configuration_*.py' --source modelscope"
+    ),
+)
+@click.argument("repo")
+@click.argument("patterns", nargs=-1)
+@click.option(
+    "--source",
+    "-s",
+    type=click.Choice(list(llm_fetch_service.SUPPORTED_SOURCES)),
+    default=llm_fetch_service.DEFAULT_SOURCE,
+    show_default=True,
+    help="模型仓库来源",
+)
+@click.option(
+    "--revision",
+    "-r",
+    default=llm_fetch_service.DEFAULT_REVISION,
+    show_default=True,
+    help="分支 / tag / commit-ish",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="输出目录（默认：当前目录下 $org/$name）",
+)
+@click.option("--token", "-k", default=None, help="访问令牌（用于私有仓库）")
+@click.option(
+    "--timeout",
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="单次 HTTP 请求超时秒数",
+)
+def fetch_command(
+    repo: str,
+    patterns: tuple[str, ...],
+    source: str,
+    revision: str,
+    output: Path | None,
+    token: str | None,
+    timeout: float,
+) -> None:
+    try:
+        if not patterns:
+            click.echo("错误: 至少需要指定一个文件名或表达式", err=True)
+            sys.exit(6)
+
+        progress = Progress(
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=None),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            transient=False,
+        )
+
+        # 当前文件对应的 progress task_id，由 on_file_start 创建，
+        # on_progress 负责持续刷新，on_file_done 收尾
+        state: dict[str, object] = {"task_id": None}
+
+        def on_file_start(rel: str, idx: int, total_files: int) -> None:
+            state["task_id"] = progress.add_task(
+                f"[{idx}/{total_files}] {rel}", total=None
+            )
+
+        def on_progress(written: int, total: int) -> None:
+            tid = state.get("task_id")
+            if tid is None:
+                return
+            progress.update(tid, completed=written, total=total or None)  # type: ignore[arg-type]
+
+        def on_file_done(rel: str, idx: int, total_files: int) -> None:
+            tid = state.get("task_id")
+            if tid is None:
+                return
+            task_obj = progress.tasks[tid]  # type: ignore[index]
+            if task_obj.total is None:
+                # 服务端未返回 Content-Length，按已写入字节数收尾以让进度条显示完成
+                progress.update(tid, total=task_obj.completed)
+            state["task_id"] = None
+
+        with progress:
+            result = llm_fetch_service.fetch_files(
+                repo=repo,
+                patterns=list(patterns),
+                source=source,
+                revision=revision,
+                output=output,
+                token=token,
+                timeout=timeout,
+                progress_cb=on_progress,
+                on_file_start=on_file_start,
+                on_file_done=on_file_done,
+            )
+
+        click.echo(
+            f"\n来源: {result.source} | 仓库: {result.repo} | 版本: {result.revision}\n"
+            f"输出目录: {result.output_dir}\n"
+            f"已下载 {len(result.files)} 个文件，总大小 {_human_size(result.total_size)}"
+        )
+        for f in result.files:
+            click.echo(f"  {f.repo_path} -> {f.local_path}  ({_human_size(f.size)})")
+
+    except QxwError as e:
+        logger.error("fetch 命令失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n操作已取消")
+        sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
