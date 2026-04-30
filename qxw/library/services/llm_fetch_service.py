@@ -1,27 +1,28 @@
 """LLM 模型仓库文件拉取服务
 
-支持从 HuggingFace / ModelScope 拉取仓库内的文件：
+实现参考 msmodeling 项目（``tensor_cast/transformers/utils.py``）的下载逻辑：
+
+- HuggingFace 来源使用 :func:`huggingface_hub.snapshot_download`
+- ModelScope 来源使用 :func:`modelscope.snapshot_download`
+
+两套官方 SDK 自带：分片并发下载、断点续传、本地缓存、tqdm 进度条、token 鉴权
+等成熟能力，比手写 urllib 流式下载稳健得多。命令行的 glob 表达式直接转发为
+SDK 的 ``allow_patterns`` 参数，由 SDK 统一做匹配与下载。
+
+公共行为：
 
 - 接受 ``org/name`` 形式的仓库名
-- 接受一个或多个文件名 / glob 表达式（如 ``configuration_*.py``）
-- 自动通过仓库 API 列出全部文件清单，再用 :mod:`fnmatch` 做表达式匹配
-- 默认输出目录为当前目录下的 ``$org/$name``，保留仓库内相对路径结构
-- 下载使用 ``.part`` 临时文件 + 原子重命名，避免中断时残留半成品
+- 至少一个文件名 / glob 表达式（如 ``configuration_*.py``），多个时按 OR 取并集
+- 默认输出目录 = ``$cwd/$org/$name``
+- ``revision`` 默认值由各来源 SDK 决定（HF=main / MS=master），命令行显式指定时透传
 - 网络错误统一映射为 :class:`NetworkError`，参数错误为 :class:`ValidationError`，
-  仓库内容错误（无文件 / 表达式未命中等）为 :class:`CommandError`
-
-实现仅依赖标准库 ``urllib``，不引入额外 SDK，避免给整体安装链路增加体积。
+  下载完后未匹配到任何文件的情况为 :class:`CommandError`
+- 缺少对应 SDK 时抛 :class:`CommandError`，提示用户按需安装
 """
 
 from __future__ import annotations
 
-import fnmatch
-import json
 import re
-import urllib.error
-import urllib.parse
-import urllib.request
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Sequence
@@ -34,20 +35,31 @@ logger = get_logger("qxw.llm_fetch")
 Source = Literal["huggingface", "modelscope"]
 SUPPORTED_SOURCES: tuple[Source, ...] = ("huggingface", "modelscope")
 DEFAULT_SOURCE: Source = "huggingface"
-DEFAULT_REVISION: str = "main"
 
 # org/name 容许的字符集合（与 HuggingFace / ModelScope 命名规则的交集）
 _REPO_RE = re.compile(r"^[A-Za-z0-9._\-]+/[A-Za-z0-9._\-]+$")
-_HF_BASE = "https://huggingface.co"
-_MS_BASE = "https://modelscope.cn"
-_CHUNK = 1024 * 64
-_USER_AGENT = "qxw-llm-fetch/1.0"
 
-# 进度回调签名: (已写入字节, 总字节)，总字节为 0 表示服务端未返回 Content-Length
-ProgressCallback = Callable[[int, int], None]
-
-# 文件级回调: (相对路径, 当前序号 1-based, 总数)
-FileLifecycleCallback = Callable[[str, int, int], None]
+# 当用户未指定 patterns 时启用的"跳过权重"模式：以这份列表作为
+# ``ignore_patterns`` 透传给 SDK，把 config / 代码 / tokenizer / license /
+# README 等仓库内"非权重张量"的文件全部拉下来，仅排除大体积的权重二进制。
+# 列表与 msmodeling 项目 `tensor_cast/transformers/utils.py` 中
+# ``_MODELSCOPE_WEIGHT_IGNORE_PATTERNS`` 完全一致（其函数名 ``_config_only``
+# 是历史命名，实际行为同样是"非权重的所有文件"，并非仅 config.json）。
+WEIGHT_IGNORE_PATTERNS: tuple[str, ...] = (
+    "*.safetensors",
+    "*.safetensors.index.json",
+    "*.bin",
+    "*.pt",
+    "*.pth",
+    "*.ckpt",
+    "*.h5",
+    "*.npz",
+    "*.onnx",
+    "*.gguf",
+    "*.zip",
+    "*.tar",
+    "*.tar.gz",
+)
 
 
 @dataclass(frozen=True)
@@ -65,7 +77,7 @@ class FetchResult:
 
     repo: str
     source: Source
-    revision: str
+    revision: str | None
     output_dir: Path
     files: tuple[FetchedFile, ...]
 
@@ -97,9 +109,15 @@ def _validate_source(source: str) -> Source:
     return source  # type: ignore[return-value]
 
 
-def _validate_patterns(patterns: Sequence[str] | None) -> tuple[str, ...]:
+def _validate_patterns(patterns: Sequence[str] | None) -> list[str]:
+    """清洗并去重 patterns 列表
+
+    patterns 允许整体为空（None / [] / 全空白）：上层会把空列表解释为
+    "跳过权重"模式，使用 :data:`WEIGHT_IGNORE_PATTERNS` 排除权重二进制，
+    其余文件（config / 代码 / tokenizer / license 等）一并拉取。
+    """
     if not patterns:
-        raise ValidationError("至少需要指定一个文件名或表达式")
+        return []
     cleaned: list[str] = []
     for p in patterns:
         if p is None:
@@ -110,246 +128,179 @@ def _validate_patterns(patterns: Sequence[str] | None) -> tuple[str, ...]:
         if ".." in s.split("/"):
             raise ValidationError(f"文件名含非法 .. 片段: {p}")
         cleaned.append(s)
-    if not cleaned:
-        raise ValidationError("文件名列表全部为空")
     seen: set[str] = set()
     out: list[str] = []
     for s in cleaned:
         if s not in seen:
             seen.add(s)
             out.append(s)
-    return tuple(out)
+    return out
 
 
-def _validate_revision(revision: str | None) -> str:
-    rev = (revision or "").strip()
-    if not rev:
-        raise ValidationError("revision 不能为空")
-    return rev
-
-
-# ============================================================
-# HTTP 工具
-# ============================================================
-
-
-def _build_request(url: str, token: str | None) -> urllib.request.Request:
-    headers = {"User-Agent": _USER_AGENT, "Accept": "*/*"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return urllib.request.Request(url, headers=headers)
-
-
-def _http_get_json(url: str, *, token: str | None, timeout: float) -> object:
-    """GET 一个 JSON 接口，把 urllib 的多种异常归一化为 NetworkError"""
-    req = _build_request(url, token)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = resp.read()
-    except urllib.error.HTTPError as e:
-        raise NetworkError(f"GET {url} 失败: HTTP {e.code} {e.reason}") from e
-    except urllib.error.URLError as e:
-        raise NetworkError(f"GET {url} 失败: {e.reason}") from e
-    except TimeoutError as e:
-        raise NetworkError(f"GET {url} 超时") from e
-    try:
-        return json.loads(data.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as e:
-        raise NetworkError(f"GET {url} 返回非 JSON 数据") from e
+def _normalize_revision(revision: str | None) -> str | None:
+    """空白 revision 视为未指定，交给 SDK 用各自的默认值（HF=main / MS=master）"""
+    if revision is None:
+        return None
+    rev = str(revision).strip()
+    return rev or None
 
 
 # ============================================================
-# 仓库文件清单
+# SDK 调用
 # ============================================================
 
 
-def _list_huggingface(org: str, name: str, revision: str, token: str | None, timeout: float) -> list[str]:
-    url = (
-        f"{_HF_BASE}/api/models/{org}/{name}/tree/"
-        f"{urllib.parse.quote(revision, safe='')}?recursive=true"
-    )
-    data = _http_get_json(url, token=token, timeout=timeout)
-    if not isinstance(data, list):
-        raise NetworkError(f"HuggingFace 文件清单结构非预期: {url}")
-    files: list[str] = []
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        if item.get("type") != "file":
-            continue
-        path = item.get("path")
-        if isinstance(path, str) and path:
-            files.append(path)
-    return files
-
-
-def _list_modelscope(org: str, name: str, revision: str, token: str | None, timeout: float) -> list[str]:
-    url = (
-        f"{_MS_BASE}/api/v1/models/{org}/{name}/repo/files"
-        f"?Revision={urllib.parse.quote(revision, safe='')}&Recursive=True"
-    )
-    data = _http_get_json(url, token=token, timeout=timeout)
-    if not isinstance(data, dict):
-        raise NetworkError(f"ModelScope 文件清单结构非预期: {url}")
-    code = data.get("Code")
-    if code not in (0, None, "0"):
-        msg = data.get("Message") or f"Code={code}"
-        raise NetworkError(f"ModelScope API 错误: {msg}")
-    container = data.get("Data") if isinstance(data.get("Data"), dict) else data
-    raw_files = container.get("Files") if isinstance(container, dict) else None
-    if not isinstance(raw_files, list):
-        raise NetworkError(f"ModelScope 文件清单结构非预期: {url}")
-    files: list[str] = []
-    for item in raw_files:
-        if not isinstance(item, dict):
-            continue
-        ftype = item.get("Type") or item.get("type")
-        # ModelScope 用 "blob" 表示文件，"tree" 表示目录
-        if ftype not in ("blob", "file"):
-            continue
-        path = item.get("Path") or item.get("path")
-        if isinstance(path, str) and path:
-            files.append(path)
-    return files
-
-
-def _list_repo_files(
-    source: Source,
-    org: str,
-    name: str,
-    revision: str,
-    token: str | None,
-    timeout: float,
-) -> list[str]:
-    if source == "huggingface":
-        return _list_huggingface(org, name, revision, token, timeout)
-    return _list_modelscope(org, name, revision, token, timeout)
-
-
-# ============================================================
-# 表达式匹配
-# ============================================================
-
-
-def _file_matches_pattern(file_path: str, pattern: str) -> bool:
-    """判断文件路径是否命中模式
-
-    - 单段 glob（``*.py``）：对路径任意一段 fnmatch，命中任意层级
-    - 多段 glob（``configs/*.py``）：按 ``/`` 分段且段数相等
-    - 非 glob：精确等值
-    """
-    has_glob = any(c in pattern for c in ("*", "?", "["))
-    if not has_glob:
-        return file_path == pattern
-    if "/" in pattern:
-        pat_segs = pattern.split("/")
-        f_segs = file_path.split("/")
-        if len(pat_segs) != len(f_segs):
-            return False
-        return all(fnmatch.fnmatchcase(s, p) for s, p in zip(f_segs, pat_segs))
-    for seg in file_path.split("/"):
-        if fnmatch.fnmatchcase(seg, pattern):
-            return True
-    return False
-
-
-def _match_patterns(files: Sequence[str], patterns: Sequence[str]) -> list[str]:
-    """按表达式列表把 files 匹配为最终目标列表
-
-    - 任意一个表达式没匹配到，整个调用以 :class:`CommandError` 失败
-      （避免静默忽略用户意图）
-    - 多个表达式可能命中重叠文件，结果会去重并保留首次出现的顺序
-    """
-    matched: list[str] = []
-    seen: set[str] = set()
-    unmatched: list[str] = []
-    for pat in patterns:
-        hits = [f for f in files if _file_matches_pattern(f, pat)]
-        if not hits:
-            unmatched.append(pat)
-            continue
-        for h in hits:
-            if h not in seen:
-                seen.add(h)
-                matched.append(h)
-    if unmatched:
-        raise CommandError(
-            f"以下表达式未匹配到任何文件: {', '.join(unmatched)}"
-        )
-    return matched
-
-
-# ============================================================
-# 单文件下载
-# ============================================================
-
-
-def _build_download_url(
-    source: Source,
-    org: str,
-    name: str,
-    revision: str,
-    file_path: str,
-) -> str:
-    quoted_rev = urllib.parse.quote(revision, safe="")
-    if source == "huggingface":
-        quoted_path = urllib.parse.quote(file_path, safe="/")
-        return f"{_HF_BASE}/{org}/{name}/resolve/{quoted_rev}/{quoted_path}"
-    return (
-        f"{_MS_BASE}/api/v1/models/{org}/{name}/repo"
-        f"?Revision={quoted_rev}&FilePath={urllib.parse.quote(file_path, safe='')}"
-    )
-
-
-def _download_one(
-    url: str,
-    dest: Path,
+def _hf_snapshot_download(
     *,
+    repo_id: str,
+    patterns: list[str],
+    local_dir: Path,
+    revision: str | None,
     token: str | None,
-    timeout: float,
-    progress_cb: ProgressCallback | None,
-) -> int:
-    req = _build_request(url, token)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".part")
+) -> Path:
+    """通过 huggingface_hub 拉取文件到 local_dir，返回最终落盘的根目录
+
+    ``patterns`` 非空时作为 ``allow_patterns`` 透传；空时改用
+    :data:`WEIGHT_IGNORE_PATTERNS` 作为 ``ignore_patterns`` —— 与 msmodeling
+    "跳过权重、拉取其余所有文件"的规则一致。
+    """
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            total_hdr = resp.headers.get("Content-Length") or "0"
-            try:
-                total = int(total_hdr)
-            except ValueError:
-                total = 0
-            written = 0
-            with tmp.open("wb") as f:
-                while True:
-                    chunk = resp.read(_CHUNK)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    written += len(chunk)
-                    if progress_cb is not None:
-                        progress_cb(written, total)
-        tmp.replace(dest)
-        return written
-    except urllib.error.HTTPError as e:
-        _safe_unlink(tmp)
-        raise NetworkError(f"下载 {url} 失败: HTTP {e.code} {e.reason}") from e
-    except urllib.error.URLError as e:
-        _safe_unlink(tmp)
-        raise NetworkError(f"下载 {url} 失败: {e.reason}") from e
-    except TimeoutError as e:
-        _safe_unlink(tmp)
-        raise NetworkError(f"下载 {url} 超时") from e
+        from huggingface_hub import snapshot_download
+    except ImportError as e:
+        raise CommandError(
+            "缺少依赖 huggingface_hub，请先安装：pip install huggingface_hub"
+        ) from e
+
+    try:
+        from huggingface_hub.errors import (
+            HfHubHTTPError,
+            RepositoryNotFoundError,
+            RevisionNotFoundError,
+        )
+    except ImportError:
+        # 兼容旧版本：errors 模块可能在 utils 下
+        try:
+            from huggingface_hub.utils import (
+                HfHubHTTPError,
+                RepositoryNotFoundError,
+                RevisionNotFoundError,
+            )
+        except ImportError:
+            HfHubHTTPError = Exception  # type: ignore[assignment,misc]
+            RepositoryNotFoundError = Exception  # type: ignore[assignment,misc]
+            RevisionNotFoundError = Exception  # type: ignore[assignment,misc]
+
+    sdk_kwargs: dict[str, object] = {
+        "repo_id": repo_id,
+        "revision": revision,
+        "local_dir": str(local_dir),
+        "token": token,
+    }
+    if patterns:
+        sdk_kwargs["allow_patterns"] = patterns
+    else:
+        sdk_kwargs["ignore_patterns"] = list(WEIGHT_IGNORE_PATTERNS)
+
+    try:
+        path = snapshot_download(**sdk_kwargs)
+    except RepositoryNotFoundError as e:
+        raise CommandError(f"HuggingFace 仓库不存在: {repo_id}") from e
+    except RevisionNotFoundError as e:
+        raise CommandError(f"HuggingFace 仓库 revision 不存在: {repo_id}@{revision}") from e
+    except HfHubHTTPError as e:
+        raise NetworkError(f"HuggingFace 下载失败: {e}") from e
     except OSError as e:
-        _safe_unlink(tmp)
-        raise CommandError(f"写入文件失败 {dest}: {e}") from e
+        raise CommandError(f"HuggingFace 写入文件失败: {e}") from e
+    return Path(path)
 
 
-def _safe_unlink(path: Path) -> None:
+def _ms_snapshot_download(
+    *,
+    model_id: str,
+    patterns: list[str],
+    local_dir: Path,
+    revision: str | None,
+    token: str | None,
+) -> Path:
+    """通过 modelscope 拉取文件到 local_dir，返回最终落盘的根目录
+
+    - ``patterns`` 非空：透传为 ``allow_patterns`` / ``allow_file_pattern``
+      （旧版 ModelScope 只识别后者，:class:`TypeError` 时回退）
+    - ``patterns`` 为空：透传为 ``ignore_patterns`` / ``ignore_file_pattern``
+      并使用 :data:`WEIGHT_IGNORE_PATTERNS`，等价于 msmodeling 的
+      ``_modelscope_snapshot_config_only`` 行为：拉取仓库内除权重之外的
+      全部文件（config / 代码 / tokenizer / license / README 等）
+    """
     try:
-        path.unlink(missing_ok=True)
+        from modelscope import snapshot_download
+    except ImportError as e:
+        raise CommandError(
+            "缺少依赖 modelscope，请先安装：pip install modelscope"
+        ) from e
+
+    base_kwargs: dict[str, object] = {
+        "model_id": model_id,
+        "local_dir": str(local_dir),
+    }
+    if revision is not None:
+        base_kwargs["revision"] = revision
+    if token is not None:
+        base_kwargs["token"] = token
+
+    if patterns:
+        new_key, legacy_key = "allow_patterns", "allow_file_pattern"
+        value: list[str] = patterns
+    else:
+        new_key, legacy_key = "ignore_patterns", "ignore_file_pattern"
+        value = list(WEIGHT_IGNORE_PATTERNS)
+
+    try:
+        try:
+            path = snapshot_download(**{new_key: value}, **base_kwargs)
+        except TypeError:
+            path = snapshot_download(**{legacy_key: value}, **base_kwargs)
     except OSError as e:
-        logger.warning("清理临时文件失败 %s: %s", path, e)
+        raise CommandError(f"ModelScope 写入文件失败: {e}") from e
+    except Exception as e:
+        # ModelScope 自定义异常体系不稳定，按异常类名兜底归类
+        cls_name = type(e).__name__
+        if "NotExist" in cls_name or "NotFound" in cls_name:
+            raise CommandError(f"ModelScope 仓库或 revision 不存在: {model_id}@{revision}") from e
+        raise NetworkError(f"ModelScope 下载失败: {e}") from e
+    return Path(path)
+
+
+# ============================================================
+# 下载结果收集
+# ============================================================
+
+
+def _collect_downloaded_files(snapshot_root: Path, output_dir: Path) -> list[FetchedFile]:
+    """枚举本次落盘后的真实文件清单
+
+    ``snapshot_download`` 可能返回 ``cache_dir`` 下的快照路径而不是用户指定的
+    ``local_dir``（旧版本 / 特定缓存策略下会出现）。这里以快照路径为准枚举，
+    最终把 ``local_path`` 用 ``output_dir`` 与 ``snapshot_root`` 中较窄的那个
+    呈现给用户，避免给出 ``~/.cache`` 下让人困惑的路径。
+    """
+    if not snapshot_root.exists() or not snapshot_root.is_dir():
+        return []
+
+    files: list[FetchedFile] = []
+    for p in sorted(snapshot_root.rglob("*")):
+        if not p.is_file():
+            continue
+        # 隐藏的 SDK 内部文件（``.cache`` / ``.huggingface`` / ``.locks`` 等）一律跳过
+        rel_parts = p.relative_to(snapshot_root).parts
+        if any(part.startswith(".") for part in rel_parts):
+            continue
+        rel = "/".join(rel_parts)
+        try:
+            size = p.stat().st_size
+        except OSError:
+            size = 0
+        files.append(FetchedFile(repo_path=rel, local_path=p, size=size))
+    return files
 
 
 # ============================================================
@@ -359,65 +310,81 @@ def _safe_unlink(path: Path) -> None:
 
 def fetch_files(
     repo: str,
-    patterns: Sequence[str],
+    patterns: Sequence[str] | None = None,
     *,
     source: str = DEFAULT_SOURCE,
-    revision: str = DEFAULT_REVISION,
+    revision: str | None = None,
     output: Path | None = None,
     token: str | None = None,
-    timeout: float = 60.0,
-    progress_cb: ProgressCallback | None = None,
-    on_file_start: FileLifecycleCallback | None = None,
-    on_file_done: FileLifecycleCallback | None = None,
 ) -> FetchResult:
     """从 HuggingFace / ModelScope 拉取仓库内文件
 
+    内部委托给官方 SDK 的 ``snapshot_download``：
+    HuggingFace -> :mod:`huggingface_hub`，ModelScope -> :mod:`modelscope`。
+
     :param repo: 仓库名，``org/name`` 形式
-    :param patterns: 文件名 / glob 表达式列表，至少一个
-    :param source: 来源，``huggingface`` 或 ``modelscope``
-    :param revision: 分支 / tag / commit，默认 ``main``
+    :param patterns: 文件名 / glob 表达式列表，可选。
+                     - 非空：作为 ``allow_patterns`` 透传，多个按 OR 取并集
+                     - 空 / None：进入"跳过权重"模式，使用
+                       :data:`WEIGHT_IGNORE_PATTERNS` 作为 ``ignore_patterns``，
+                       拉取仓库内除权重二进制之外的全部文件（config / 代码 /
+                       tokenizer / license / README 等），与 msmodeling 项目的
+                       ``_modelscope_snapshot_config_only`` 规则保持一致
+    :param source: 来源，``huggingface``（默认）或 ``modelscope``
+    :param revision: 分支 / tag / commit；缺省时由各 SDK 用其默认值
+                     （HF=``main`` / MS=``master``）
     :param output: 输出目录；缺省为 ``$cwd/$org/$name``
     :param token: 访问令牌（私有仓库时使用）
-    :param timeout: 单次 HTTP 请求超时秒数
-    :param progress_cb: 单文件下载进度回调 ``(written, total)``
-    :param on_file_start: 每个文件开始下载前调用 ``(rel, idx, total)``
-    :param on_file_done: 每个文件下载完成后调用 ``(rel, idx, total)``
 
-    :raises ValidationError: 仓库名 / 来源 / 表达式 / revision 不合法
-    :raises NetworkError: 列表 / 下载 HTTP 失败或超时
-    :raises CommandError: 仓库无文件、表达式未命中、写入失败
+    :raises ValidationError: 仓库名 / 来源 / 表达式 不合法
+    :raises CommandError: 缺少对应 SDK / 仓库或 revision 不存在 / 下载完成后
+                          按规则过滤后 0 个文件
+    :raises NetworkError: SDK 内部 HTTP 请求失败
     """
     org, name = _validate_repo(repo)
     src = _validate_source(source)
-    rev = _validate_revision(revision)
     pats = _validate_patterns(patterns)
+    rev = _normalize_revision(revision)
 
     out_dir = Path(output) if output is not None else Path.cwd() / org / name
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    all_files = _list_repo_files(src, org, name, rev, token, timeout)
-    if not all_files:
-        raise CommandError(f"仓库 {repo} (revision={rev}) 内没有可拉取的文件")
+    repo_id = f"{org}/{name}"
+    mode = "allow=" + ",".join(pats) if pats else "skip-weights (ignore weight binaries)"
+    logger.info("开始拉取 %s @ %s [%s] -> %s", repo_id, rev or "(default)", mode, out_dir)
 
-    targets = _match_patterns(all_files, pats)
-    total = len(targets)
+    if src == "huggingface":
+        snapshot_root = _hf_snapshot_download(
+            repo_id=repo_id,
+            patterns=pats,
+            local_dir=out_dir,
+            revision=rev,
+            token=token,
+        )
+    else:
+        snapshot_root = _ms_snapshot_download(
+            model_id=repo_id,
+            patterns=pats,
+            local_dir=out_dir,
+            revision=rev,
+            token=token,
+        )
 
-    fetched: list[FetchedFile] = []
-    for idx, rel in enumerate(targets, 1):
-        if on_file_start is not None:
-            on_file_start(rel, idx, total)
-        url = _build_download_url(src, org, name, rev, rel)
-        dest = out_dir / rel
-        size = _download_one(url, dest, token=token, timeout=timeout, progress_cb=progress_cb)
-        fetched.append(FetchedFile(repo_path=rel, local_path=dest, size=size))
-        logger.info("已下载 %s -> %s (%d bytes)", rel, dest, size)
-        if on_file_done is not None:
-            on_file_done(rel, idx, total)
+    files = _collect_downloaded_files(snapshot_root, out_dir)
+    if not files:
+        if pats:
+            raise CommandError(
+                f"按表达式过滤后未下载到任何文件: {', '.join(pats)}"
+                f"（请检查仓库 {repo_id} 是否包含目标文件）"
+            )
+        raise CommandError(
+            f"跳过权重模式下未下载到任何文件（仓库 {repo_id} 可能只含权重二进制文件）"
+        )
 
     return FetchResult(
-        repo=f"{org}/{name}",
+        repo=repo_id,
         source=src,
         revision=rev,
-        output_dir=out_dir,
-        files=tuple(fetched),
+        output_dir=snapshot_root,
+        files=tuple(files),
     )

@@ -26,14 +26,6 @@ import click
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
-from rich.progress import (
-    BarColumn,
-    DownloadColumn,
-    Progress,
-    TextColumn,
-    TimeRemainingColumn,
-    TransferSpeedColumn,
-)
 from rich.table import Table
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -917,9 +909,10 @@ def _human_size(n: int) -> str:
 
 @main.command(
     name="fetch",
-    help="从 HuggingFace / ModelScope 拉取仓库内文件（支持精确名与 glob 表达式）",
+    help="从 HuggingFace / ModelScope 拉取仓库内文件（不指定文件时跳过权重二进制，拉取其余所有文件）",
     epilog=(
-        "示例: qxw-llm fetch bert-base/uncased 'config.json' 'tokenizer*.json'\n"
+        "示例: qxw-llm fetch bert-base-chinese                      # 跳过权重，拉所有非权重文件\n"
+        "      qxw-llm fetch bert-base-chinese 'config.json' 'tokenizer*.json'\n"
         "      qxw-llm fetch Qwen/Qwen2-7B 'configuration_*.py' --source modelscope"
     ),
 )
@@ -936,9 +929,8 @@ def _human_size(n: int) -> str:
 @click.option(
     "--revision",
     "-r",
-    default=llm_fetch_service.DEFAULT_REVISION,
-    show_default=True,
-    help="分支 / tag / commit-ish",
+    default=None,
+    help="分支 / tag / commit-ish（默认由对应 SDK 决定：HF=main / MS=master）",
 )
 @click.option(
     "--output",
@@ -949,78 +941,30 @@ def _human_size(n: int) -> str:
     help="输出目录（默认：当前目录下 $org/$name）",
 )
 @click.option("--token", "-k", default=None, help="访问令牌（用于私有仓库）")
-@click.option(
-    "--timeout",
-    type=float,
-    default=60.0,
-    show_default=True,
-    help="单次 HTTP 请求超时秒数",
-)
 def fetch_command(
     repo: str,
     patterns: tuple[str, ...],
     source: str,
-    revision: str,
+    revision: str | None,
     output: Path | None,
     token: str | None,
-    timeout: float,
 ) -> None:
     try:
-        if not patterns:
-            click.echo("错误: 至少需要指定一个文件名或表达式", err=True)
-            sys.exit(6)
-
-        progress = Progress(
-            TextColumn("[bold cyan]{task.description}"),
-            BarColumn(bar_width=None),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-            console=console,
-            transient=False,
+        # 进度条由 SDK（huggingface_hub / modelscope）内置的 tqdm 直接打印到 stderr，
+        # 这里不再叠加 rich.Progress，避免双重 UI 干扰
+        result = llm_fetch_service.fetch_files(
+            repo=repo,
+            patterns=list(patterns) if patterns else None,
+            source=source,
+            revision=revision,
+            output=output,
+            token=token,
         )
 
-        # 当前文件对应的 progress task_id，由 on_file_start 创建，
-        # on_progress 负责持续刷新，on_file_done 收尾
-        state: dict[str, object] = {"task_id": None}
-
-        def on_file_start(rel: str, idx: int, total_files: int) -> None:
-            state["task_id"] = progress.add_task(
-                f"[{idx}/{total_files}] {rel}", total=None
-            )
-
-        def on_progress(written: int, total: int) -> None:
-            tid = state.get("task_id")
-            if tid is None:
-                return
-            progress.update(tid, completed=written, total=total or None)  # type: ignore[arg-type]
-
-        def on_file_done(rel: str, idx: int, total_files: int) -> None:
-            tid = state.get("task_id")
-            if tid is None:
-                return
-            task_obj = progress.tasks[tid]  # type: ignore[index]
-            if task_obj.total is None:
-                # 服务端未返回 Content-Length，按已写入字节数收尾以让进度条显示完成
-                progress.update(tid, total=task_obj.completed)
-            state["task_id"] = None
-
-        with progress:
-            result = llm_fetch_service.fetch_files(
-                repo=repo,
-                patterns=list(patterns),
-                source=source,
-                revision=revision,
-                output=output,
-                token=token,
-                timeout=timeout,
-                progress_cb=on_progress,
-                on_file_start=on_file_start,
-                on_file_done=on_file_done,
-            )
-
+        rev_label = result.revision or "(default)"
+        mode_label = "skip-weights" if not patterns else "allow=" + ",".join(patterns)
         click.echo(
-            f"\n来源: {result.source} | 仓库: {result.repo} | 版本: {result.revision}\n"
+            f"\n来源: {result.source} | 仓库: {result.repo} | 版本: {rev_label} | 模式: {mode_label}\n"
             f"输出目录: {result.output_dir}\n"
             f"已下载 {len(result.files)} 个文件，总大小 {_human_size(result.total_size)}"
         )

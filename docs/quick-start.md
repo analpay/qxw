@@ -128,10 +128,13 @@ qxw-llm chat
 # 或发送单条消息
 qxw-llm chat -m "你好"
 
-# 从 HuggingFace 拉取模型仓库的指定文件（默认输出到 ./$org/$name/）
+# 不传文件名：跳过权重二进制，拉取仓库内其余所有文件
+qxw-llm fetch bert-base-chinese
+
+# 指定文件 / glob 表达式（默认输出到 ./$org/$name/）
 qxw-llm fetch bert-base-chinese config.json tokenizer.json
 
-# 支持 glob 表达式 + 切换为 ModelScope
+# glob 表达式 + 切换为 ModelScope
 qxw-llm fetch Qwen/Qwen2-7B 'configuration_*.py' --source modelscope
 ```
 

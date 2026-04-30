@@ -326,13 +326,20 @@ qxw-llm chat --system "你是一个 Python 专家"
 
 ### qxw-llm fetch
 
-从 HuggingFace 或 ModelScope 拉取模型仓库内的文件，支持精确文件名与 glob 表达式（如 `configuration_*.py`）。
+从 HuggingFace 或 ModelScope 拉取模型仓库内的文件，支持精确文件名与 glob 表达式（如 `configuration_*.py`）。底层直接调用官方 SDK：
+
+- HuggingFace 来源 → [`huggingface_hub.snapshot_download`](https://huggingface.co/docs/huggingface_hub/main/en/package_reference/file_download#huggingface_hub.snapshot_download)
+- ModelScope 来源  → `modelscope.snapshot_download`
 
 ```bash
-# 默认从 HuggingFace 拉取，文件保存到当前目录下的 $org/$name/
+# 不传 patterns：跳过权重二进制，拉取仓库内其余所有文件
+# （config / 代码 / tokenizer / license / README 等）
+qxw-llm fetch bert-base-chinese
+
+# 指定文件 / glob 表达式（默认从 HuggingFace 拉取，保存到 ./$org/$name/）
 qxw-llm fetch bert-base-chinese config.json tokenizer.json
 
-# 同时拉取多个文件 + 表达式（命中任意层级的 configuration_*.py）
+# 同时拉取多个表达式（命中任意层级的 configuration_*.py）
 qxw-llm fetch Qwen/Qwen2-7B 'configuration_*.py' 'tokenizer*.json'
 
 # 切换为 ModelScope 来源
@@ -347,28 +354,37 @@ qxw-llm fetch org/repo '*.json' --revision v1.0 --output ./weights --token <hf_t
 | 参数 | 缩写 | 默认值 | 说明 |
 |------|------|--------|------|
 | `REPO` | - | - | 仓库标识，必填，格式为 `org/name` |
-| `PATTERNS…` | - | - | 文件名或 glob 表达式，至少一个，可重复 |
+| `PATTERNS…` | - | (跳过权重模式) | 文件名或 glob 表达式，可重复；非空时透传为 SDK 的 `allow_patterns`。**不传时进入"跳过权重"模式** |
 | `--source` | `-s` | `huggingface` | 仓库来源：`huggingface` / `modelscope` |
-| `--revision` | `-r` | `main` | 分支 / tag / commit-ish |
+| `--revision` | `-r` | (各 SDK 默认) | 分支 / tag / commit-ish；不指定时由 SDK 决定（HF=`main` / MS=`master`） |
 | `--output` | `-o` | `./$org/$name` | 输出目录，保留仓库内相对路径结构 |
 | `--token` | `-k` | (无) | 访问令牌（私有仓库使用） |
-| `--timeout` | - | `60.0` | 单次 HTTP 请求超时秒数 |
 
-#### 表达式匹配规则
+#### 模式说明
 
-- **精确路径**：`config.json` 仅命中根目录下的同名文件
-- **单段 glob**（不含 `/`）：如 `configuration_*.py`，命中任意层级中段名匹配的文件
-- **多段 glob**（含 `/`）：如 `configs/*.py`，按 `/` 分段且段数必须相等，不会跨级
-- 任意一个表达式未命中，整个 fetch 调用失败（避免静默忽略用户意图）
-- 多个表达式命中重叠的文件会自动去重
+**指定 patterns**（白名单）：作为 SDK 的 `allow_patterns` 透传，多个按 OR 取并集
+
+- 精确路径：`config.json` 仅命中同名文件
+- glob：`configuration_*.py` / `*.json` / `weights/*.bin` 等
+- 命中文件自动去重
+
+**未指定 patterns**（跳过权重）：行为对齐 msmodeling 项目 `tensor_cast/transformers/utils.py` 中的 `_modelscope_snapshot_config_only`，以下面这组权重相关后缀作为 SDK 的 `ignore_patterns`，**其余文件全部拉取**（config / 代码 / tokenizer / license / README 等）：
+
+- `*.safetensors` / `*.safetensors.index.json`
+- `*.bin` / `*.pt` / `*.pth` / `*.ckpt`
+- `*.h5` / `*.npz` / `*.onnx` / `*.gguf`
+- `*.zip` / `*.tar` / `*.tar.gz`
+
+无论哪种模式，最终命中文件数为 0 时整个调用以命令错误退出，避免静默不下载任何东西。
 
 #### 行为约束
 
 - 默认输出目录为 `$cwd/$org/$name`，命令会自动建目录
-- 下载使用 `*.part` 临时文件 + 原子替换，中断时不会留下半成品
-- 遇到 `org/name` 格式非法、表达式含 `..` 越界片段、revision 为空等参数问题，会立刻以校验错误退出
-- 列表 / 下载阶段 HTTP 失败、超时统一以网络错误退出（exit_code=5）
-- 仓库为空或所有表达式都未命中时，以命令错误退出（exit_code=4）
+- 断点续传 / 分片并发下载 / 鉴权 / 进度条 全部由 SDK 提供（进度条直接打印到 stderr）
+- 缺少 `huggingface_hub` 或 `modelscope` 时会以命令错误退出，并提示安装命令
+- 遇到 `org/name` 格式非法、表达式含 `..` 越界片段等参数问题，会立刻以校验错误退出（exit_code=6）
+- 仓库 / revision 不存在 → 命令错误（exit_code=4）
+- SDK 内部 HTTP 错误 → 网络错误（exit_code=5）
 
 ## qxw-serve
 

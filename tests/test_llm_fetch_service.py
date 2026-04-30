@@ -1,21 +1,23 @@
 """qxw.library.services.llm_fetch_service 单元测试
 
-聚焦异常路径与边界，遵循 0 happy test 原则：
-- 入参校验：空仓库名 / 非法 org-name / 非法 source / 空表达式 / .. 越界 / 空 revision
-- 文件清单：HF 返回结构非预期 / ModelScope Code != 0 / 列表为空
-- 表达式匹配：精确不命中 / 单段 glob 与多段 glob / 至少一个表达式未命中应失败
-- 下载：HTTPError / URLError / TimeoutError / OSError 时清理 .part 临时文件
-- 端到端：mock 文件清单与下载，验证回调顺序、目录结构、空 Content-Length 处理
+服务层在 v2 切换为以官方 SDK 为后端：
+- HuggingFace -> ``huggingface_hub.snapshot_download``
+- ModelScope  -> ``modelscope.snapshot_download``
+
+测试遵循 0 happy test 原则，重点覆盖：
+- 入参校验：空仓库 / 非法 org-name / 非法 source / 空表达式 / .. 越界
+- SDK 缺失：huggingface_hub / modelscope 不可用 → CommandError
+- HF 异常：RepositoryNotFoundError / RevisionNotFoundError / HfHubHTTPError
+- MS 异常：TypeError 触发 allow_file_pattern 回退、未知异常按类名归类
+- 收集：只能收集 snapshot_root 下的真实文件，过滤隐藏目录与非文件项
+- 端到端：默认输出目录 = $cwd/$org/$name；下载后 0 文件 → CommandError
 """
 
 from __future__ import annotations
 
-import json
-import urllib.error
-from io import BytesIO
+import sys
+import types
 from pathlib import Path
-from typing import Iterable
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -67,378 +69,525 @@ class TestValidateSource:
 
 
 class TestValidatePatterns:
-    def test_None(self) -> None:
-        with pytest.raises(ValidationError):
-            svc._validate_patterns(None)  # type: ignore[arg-type]
+    def test_None_视为空(self) -> None:
+        # 空 / None 用于触发 config-only 模式，不再视为非法
+        assert svc._validate_patterns(None) == []  # type: ignore[arg-type]
 
-    def test_空列表(self) -> None:
-        with pytest.raises(ValidationError):
-            svc._validate_patterns([])
+    def test_空列表_视为空(self) -> None:
+        assert svc._validate_patterns([]) == []
 
-    def test_全空白条目(self) -> None:
-        with pytest.raises(ValidationError):
-            svc._validate_patterns(["", "  ", None])  # type: ignore[list-item]
+    def test_全空白条目_视为空(self) -> None:
+        assert svc._validate_patterns(["", "  ", None]) == []  # type: ignore[list-item]
 
     def test_含_dotdot(self) -> None:
         with pytest.raises(ValidationError):
             svc._validate_patterns(["../etc/passwd"])
 
     def test_去重保序(self) -> None:
-        assert svc._validate_patterns(["a", "b", "a"]) == ("a", "b")
+        assert svc._validate_patterns(["a", "b", "a"]) == ["a", "b"]
 
     def test_反斜杠归一(self) -> None:
-        assert svc._validate_patterns(["dir\\sub\\f.py"]) == ("dir/sub/f.py",)
+        assert svc._validate_patterns(["dir\\sub\\f.py"]) == ["dir/sub/f.py"]
 
 
-class TestValidateRevision:
-    def test_空(self) -> None:
-        with pytest.raises(ValidationError):
-            svc._validate_revision("")
-
+class TestNormalizeRevision:
     def test_None(self) -> None:
-        with pytest.raises(ValidationError):
-            svc._validate_revision(None)
+        assert svc._normalize_revision(None) is None
 
-    def test_仅空白(self) -> None:
-        with pytest.raises(ValidationError):
-            svc._validate_revision("   ")
+    def test_空白(self) -> None:
+        assert svc._normalize_revision("  ") is None
 
-    def test_合法(self) -> None:
-        assert svc._validate_revision("v1.0") == "v1.0"
+    def test_有效(self) -> None:
+        assert svc._normalize_revision("v1.0") == "v1.0"
 
 
 # ============================================================
-# 表达式匹配
+# 文件清单收集
 # ============================================================
 
 
-class TestFileMatchesPattern:
-    def test_精确路径(self) -> None:
-        assert svc._file_matches_pattern("config.json", "config.json")
-        assert not svc._file_matches_pattern("config.json", "configuration.json")
+class TestCollectDownloadedFiles:
+    def test_不存在的目录(self, tmp_path: Path) -> None:
+        assert svc._collect_downloaded_files(tmp_path / "nope", tmp_path) == []
 
-    def test_单段_glob_命中任意层级(self) -> None:
-        assert svc._file_matches_pattern("configuration_qwen.py", "configuration_*.py")
-        assert svc._file_matches_pattern("nested/configuration_x.py", "configuration_*.py")
-        assert not svc._file_matches_pattern("configuration.txt", "configuration_*.py")
+    def test_过滤隐藏目录(self, tmp_path: Path) -> None:
+        (tmp_path / ".cache").mkdir()
+        (tmp_path / ".cache" / "x").write_bytes(b"x")
+        (tmp_path / ".huggingface").mkdir()
+        (tmp_path / ".huggingface" / "y").write_bytes(b"y")
+        (tmp_path / "config.json").write_bytes(b"data")
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "tokenizer.json").write_bytes(b"t")
 
-    def test_多段_glob_严格段数(self) -> None:
-        assert svc._file_matches_pattern("configs/a.py", "configs/*.py")
-        # 段数不等：多段 glob 不跨级
-        assert not svc._file_matches_pattern("configs/sub/a.py", "configs/*.py")
+        files = svc._collect_downloaded_files(tmp_path, tmp_path)
+        rels = sorted(f.repo_path for f in files)
+        assert rels == ["config.json", "sub/tokenizer.json"]
 
-    def test_问号_中括号(self) -> None:
-        assert svc._file_matches_pattern("a1.py", "a?.py")
-        assert svc._file_matches_pattern("a1.py", "a[0-9].py")
-        assert not svc._file_matches_pattern("ab.py", "a[0-9].py")
+    def test_size_读取失败_容错(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        f = tmp_path / "broken.bin"
+        f.write_bytes(b"abc")
+        original_stat = Path.stat
+
+        def bad_stat(self: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if self == f:
+                raise OSError("permission denied")
+            return original_stat(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "stat", bad_stat)
+        files = svc._collect_downloaded_files(tmp_path, tmp_path)
+        assert any(x.repo_path == "broken.bin" and x.size == 0 for x in files)
 
 
-class TestMatchPatterns:
-    def test_未命中任意一个表达式_整体失败(self) -> None:
+# ============================================================
+# SDK 缺失分支
+# ============================================================
+
+
+def _make_fake_module(name: str, **attrs: object) -> types.ModuleType:
+    mod = types.ModuleType(name)
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    return mod
+
+
+class TestHfSdkMissing:
+    def test_缺少_huggingface_hub(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, "huggingface_hub", None)
         with pytest.raises(CommandError) as exc:
-            svc._match_patterns(["a.py", "b.py"], ["c.py", "d.py"])
-        assert "未匹配" in exc.value.message
-
-    def test_部分未命中_仍然失败(self) -> None:
-        with pytest.raises(CommandError):
-            svc._match_patterns(["a.py", "b.py"], ["a.py", "missing.py"])
-
-    def test_重叠去重(self) -> None:
-        # *.py 命中 a.py 和 b.py，a.py 单独再命中一次，去重后还是 [a.py, b.py]
-        result = svc._match_patterns(["a.py", "b.py"], ["*.py", "a.py"])
-        assert result == ["a.py", "b.py"]
+            svc._hf_snapshot_download(
+                repo_id="o/n",
+                patterns=["*.json"],
+                local_dir=tmp_path,
+                revision=None,
+                token=None,
+            )
+        assert "huggingface_hub" in exc.value.message
 
 
-# ============================================================
-# HTTP / 文件清单
-# ============================================================
-
-
-def _fake_resp(payload: bytes, content_length: int | None = None) -> MagicMock:
-    """构造一个伪造的 urlopen 上下文管理器返回值"""
-
-    class _Resp:
-        def __init__(self) -> None:
-            self._buf = BytesIO(payload)
-            self.headers = {"Content-Length": str(content_length)} if content_length is not None else {}
-
-        def __enter__(self):  # type: ignore[no-untyped-def]
-            return self
-
-        def __exit__(self, *a, **kw):  # type: ignore[no-untyped-def]
-            return False
-
-        def read(self, size: int = -1) -> bytes:
-            return self._buf.read(size)
-
-    return _Resp()  # type: ignore[return-value]
-
-
-class TestHttpGetJson:
-    def test_HTTPError(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(*a, **kw):
-            raise urllib.error.HTTPError("http://x", 404, "Not Found", {}, None)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(svc.urllib.request, "urlopen", boom)
-        with pytest.raises(NetworkError) as exc:
-            svc._http_get_json("http://x", token=None, timeout=1.0)
-        assert "404" in exc.value.message
-
-    def test_URLError(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(*a, **kw):
-            raise urllib.error.URLError("dns failed")
-
-        monkeypatch.setattr(svc.urllib.request, "urlopen", boom)
-        with pytest.raises(NetworkError):
-            svc._http_get_json("http://x", token=None, timeout=1.0)
-
-    def test_TimeoutError(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(*a, **kw):
-            raise TimeoutError()
-
-        monkeypatch.setattr(svc.urllib.request, "urlopen", boom)
-        with pytest.raises(NetworkError) as exc:
-            svc._http_get_json("http://x", token=None, timeout=1.0)
-        assert "超时" in exc.value.message
-
-    def test_非_JSON(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            svc.urllib.request, "urlopen", lambda *a, **kw: _fake_resp(b"<html>")
-        )
-        with pytest.raises(NetworkError) as exc:
-            svc._http_get_json("http://x", token=None, timeout=1.0)
-        assert "非 JSON" in exc.value.message
-
-
-class TestListHuggingface:
-    def test_返回非列表(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(svc, "_http_get_json", lambda *a, **kw: {"oops": True})
-        with pytest.raises(NetworkError):
-            svc._list_huggingface("o", "n", "main", None, 1.0)
-
-    def test_过滤目录_只保留_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        payload = [
-            {"type": "directory", "path": "subdir"},
-            {"type": "file", "path": "config.json"},
-            {"type": "file", "path": "tokenizer.json"},
-            {"type": "file"},  # 缺 path：应被忽略
-            "garbage",  # 非 dict：应被忽略
-        ]
-        monkeypatch.setattr(svc, "_http_get_json", lambda *a, **kw: payload)
-        files = svc._list_huggingface("o", "n", "main", None, 1.0)
-        assert files == ["config.json", "tokenizer.json"]
-
-
-class TestListModelscope:
-    def test_返回非_dict(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(svc, "_http_get_json", lambda *a, **kw: [])
-        with pytest.raises(NetworkError):
-            svc._list_modelscope("o", "n", "main", None, 1.0)
-
-    def test_API_错误码非零(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            svc,
-            "_http_get_json",
-            lambda *a, **kw: {"Code": 10001, "Message": "repo not found"},
-        )
-        with pytest.raises(NetworkError) as exc:
-            svc._list_modelscope("o", "n", "main", None, 1.0)
-        assert "repo not found" in exc.value.message
-
-    def test_Files_缺失(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            svc,
-            "_http_get_json",
-            lambda *a, **kw: {"Code": 0, "Data": {"NoFiles": []}},
-        )
-        with pytest.raises(NetworkError):
-            svc._list_modelscope("o", "n", "main", None, 1.0)
-
-    def test_只保留_blob(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        payload = {
-            "Code": 0,
-            "Data": {
-                "Files": [
-                    {"Type": "tree", "Path": "subdir"},
-                    {"Type": "blob", "Path": "config.json"},
-                    {"type": "file", "path": "lower_case.json"},
-                    {"Type": "blob"},  # 缺 path：忽略
-                ]
-            },
-        }
-        monkeypatch.setattr(svc, "_http_get_json", lambda *a, **kw: payload)
-        files = svc._list_modelscope("o", "n", "main", None, 1.0)
-        assert "config.json" in files
-        assert "lower_case.json" in files
-        assert "subdir" not in files
+class TestMsSdkMissing:
+    def test_缺少_modelscope(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, "modelscope", None)
+        with pytest.raises(CommandError) as exc:
+            svc._ms_snapshot_download(
+                model_id="o/n",
+                patterns=["*.json"],
+                local_dir=tmp_path,
+                revision=None,
+                token=None,
+            )
+        assert "modelscope" in exc.value.message
 
 
 # ============================================================
-# 单文件下载
+# HF 异常归类
 # ============================================================
 
 
-class TestDownloadOne:
-    def test_HTTPError_清理_part(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(*a, **kw):
-            raise urllib.error.HTTPError("http://x", 403, "Forbidden", {}, None)  # type: ignore[arg-type]
+class _FakeRepoNotFound(Exception):
+    pass
 
-        monkeypatch.setattr(svc.urllib.request, "urlopen", boom)
-        dest = tmp_path / "sub" / "a.bin"
-        # 提前放一个 .part 文件，验证不会被错误地保留
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        (dest.parent / "a.bin.part").write_bytes(b"stale")
+
+class _FakeRevisionNotFound(Exception):
+    pass
+
+
+class _FakeHfHubHTTPError(Exception):
+    pass
+
+
+def _install_fake_hf(monkeypatch: pytest.MonkeyPatch, *, behavior) -> None:
+    """安装一个伪造的 huggingface_hub 模块"""
+    errors_mod = _make_fake_module(
+        "huggingface_hub.errors",
+        HfHubHTTPError=_FakeHfHubHTTPError,
+        RepositoryNotFoundError=_FakeRepoNotFound,
+        RevisionNotFoundError=_FakeRevisionNotFound,
+    )
+    hf_mod = _make_fake_module(
+        "huggingface_hub",
+        snapshot_download=behavior,
+        errors=errors_mod,
+    )
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hf_mod)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.errors", errors_mod)
+
+
+class TestHfErrorMapping:
+    def test_仓库不存在(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(**k):
+            raise _FakeRepoNotFound("not found")
+
+        _install_fake_hf(monkeypatch, behavior=boom)
+        with pytest.raises(CommandError) as exc:
+            svc._hf_snapshot_download(
+                repo_id="o/n", patterns=["*.json"], local_dir=tmp_path, revision=None, token=None
+            )
+        assert "仓库不存在" in exc.value.message
+
+    def test_revision_不存在(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(**k):
+            raise _FakeRevisionNotFound("bad")
+
+        _install_fake_hf(monkeypatch, behavior=boom)
+        with pytest.raises(CommandError) as exc:
+            svc._hf_snapshot_download(
+                repo_id="o/n",
+                patterns=["*.json"],
+                local_dir=tmp_path,
+                revision="v9",
+                token=None,
+            )
+        assert "revision 不存在" in exc.value.message
+
+    def test_HTTP_错误归类_NetworkError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(**k):
+            raise _FakeHfHubHTTPError("503")
+
+        _install_fake_hf(monkeypatch, behavior=boom)
         with pytest.raises(NetworkError):
-            svc._download_one("http://x", dest, token=None, timeout=1.0, progress_cb=None)
-        assert not (dest.parent / "a.bin.part").exists()
+            svc._hf_snapshot_download(
+                repo_id="o/n", patterns=["*.json"], local_dir=tmp_path, revision=None, token=None
+            )
 
-    def test_URLError_清理_part(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            svc.urllib.request,
-            "urlopen",
-            lambda *a, **kw: (_ for _ in ()).throw(urllib.error.URLError("net down")),
-        )
-        dest = tmp_path / "f.bin"
-        with pytest.raises(NetworkError):
-            svc._download_one("http://x", dest, token=None, timeout=1.0, progress_cb=None)
-        assert not (tmp_path / "f.bin.part").exists()
-
-    def test_TimeoutError(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            svc.urllib.request,
-            "urlopen",
-            lambda *a, **kw: (_ for _ in ()).throw(TimeoutError()),
-        )
-        with pytest.raises(NetworkError) as exc:
-            svc._download_one("http://x", tmp_path / "g.bin", token=None, timeout=1.0, progress_cb=None)
-        assert "超时" in exc.value.message
-
-    def test_OSError_映射_CommandError(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            svc.urllib.request, "urlopen", lambda *a, **kw: _fake_resp(b"data", 4)
-        )
-
-        def bad_replace(self: Path, target: Path) -> None:
+    def test_OSError_归类_CommandError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(**k):
             raise OSError("disk full")
 
-        monkeypatch.setattr(Path, "replace", bad_replace)
-        with pytest.raises(CommandError):
-            svc._download_one("http://x", tmp_path / "z.bin", token=None, timeout=1.0, progress_cb=None)
+        _install_fake_hf(monkeypatch, behavior=boom)
+        with pytest.raises(CommandError) as exc:
+            svc._hf_snapshot_download(
+                repo_id="o/n", patterns=["*.json"], local_dir=tmp_path, revision=None, token=None
+            )
+        assert "写入文件失败" in exc.value.message
 
-    def test_成功_无_Content_Length(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        progress_calls: list[tuple[int, int]] = []
-        monkeypatch.setattr(
-            svc.urllib.request, "urlopen", lambda *a, **kw: _fake_resp(b"hello", None)
-        )
-        size = svc._download_one(
-            "http://x",
-            tmp_path / "o" / "h.txt",
-            token="t",
-            timeout=1.0,
-            progress_cb=lambda w, t: progress_calls.append((w, t)),
-        )
-        assert size == 5
-        assert (tmp_path / "o" / "h.txt").read_bytes() == b"hello"
-        assert progress_calls and progress_calls[-1] == (5, 0)
-
-    def test_成功_带_token_鉴权头(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_成功路径_kwargs_透传(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         captured: dict = {}
 
-        def fake_urlopen(req, timeout):  # type: ignore[no-untyped-def]
-            captured["headers"] = dict(req.header_items())
-            return _fake_resp(b"data", 4)
+        def fake(**kwargs):
+            captured.update(kwargs)
+            return str(tmp_path)
 
-        monkeypatch.setattr(svc.urllib.request, "urlopen", fake_urlopen)
-        svc._download_one("http://x", tmp_path / "a.bin", token="abc", timeout=1.0, progress_cb=None)
-        # urllib 把 header 名字转成 title-case
-        assert captured["headers"].get("Authorization") == "Bearer abc"
+        _install_fake_hf(monkeypatch, behavior=fake)
+        path = svc._hf_snapshot_download(
+            repo_id="o/n",
+            patterns=["*.json"],
+            local_dir=tmp_path,
+            revision="v1",
+            token="t",
+        )
+        assert path == tmp_path
+        assert captured["repo_id"] == "o/n"
+        assert captured["allow_patterns"] == ["*.json"]
+        assert captured["revision"] == "v1"
+        assert captured["token"] == "t"
+        assert captured["local_dir"] == str(tmp_path)
+        assert "ignore_patterns" not in captured
+
+    def test_config_only_模式_用_ignore_patterns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """patterns 为空时，应改用 WEIGHT_IGNORE_PATTERNS 作为 ignore_patterns"""
+        captured: dict = {}
+
+        def fake(**kwargs):
+            captured.update(kwargs)
+            return str(tmp_path)
+
+        _install_fake_hf(monkeypatch, behavior=fake)
+        svc._hf_snapshot_download(
+            repo_id="o/n",
+            patterns=[],
+            local_dir=tmp_path,
+            revision=None,
+            token=None,
+        )
+        assert "allow_patterns" not in captured
+        assert captured["ignore_patterns"] == list(svc.WEIGHT_IGNORE_PATTERNS)
+        # 与 msmodeling 保持一致的关键后缀
+        assert "*.safetensors" in captured["ignore_patterns"]
+        assert "*.bin" in captured["ignore_patterns"]
+        assert "*.gguf" in captured["ignore_patterns"]
 
 
 # ============================================================
-# fetch_files 端到端（mock 网络）
+# MS 异常归类与回退
+# ============================================================
+
+
+def _install_fake_ms(monkeypatch: pytest.MonkeyPatch, *, behavior) -> None:
+    ms_mod = _make_fake_module("modelscope", snapshot_download=behavior)
+    monkeypatch.setitem(sys.modules, "modelscope", ms_mod)
+
+
+class TestMsErrorMapping:
+    def test_TypeError_触发_allow_file_pattern_回退(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[dict] = []
+
+        def fake(**kwargs):
+            calls.append(kwargs)
+            if "allow_patterns" in kwargs:
+                raise TypeError("unexpected kwarg")
+            return str(tmp_path)
+
+        _install_fake_ms(monkeypatch, behavior=fake)
+        path = svc._ms_snapshot_download(
+            model_id="o/n",
+            patterns=["*.py"],
+            local_dir=tmp_path,
+            revision="master",
+            token=None,
+        )
+        assert path == tmp_path
+        # 第一次用 allow_patterns，第二次回退到 allow_file_pattern
+        assert "allow_patterns" in calls[0]
+        assert "allow_file_pattern" in calls[1]
+
+    def test_OSError_映射_CommandError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(**kwargs):
+            raise OSError("disk full")
+
+        _install_fake_ms(monkeypatch, behavior=boom)
+        with pytest.raises(CommandError) as exc:
+            svc._ms_snapshot_download(
+                model_id="o/n",
+                patterns=["*.json"],
+                local_dir=tmp_path,
+                revision=None,
+                token=None,
+            )
+        assert "写入文件失败" in exc.value.message
+
+    def test_仓库不存在_按异常类名识别(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class NotExistError(Exception):
+            pass
+
+        def boom(**kwargs):
+            raise NotExistError("repo gone")
+
+        _install_fake_ms(monkeypatch, behavior=boom)
+        with pytest.raises(CommandError) as exc:
+            svc._ms_snapshot_download(
+                model_id="o/n",
+                patterns=["*.json"],
+                local_dir=tmp_path,
+                revision="v1",
+                token=None,
+            )
+        assert "不存在" in exc.value.message
+
+    def test_其他异常_归类_NetworkError(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(**kwargs):
+            raise RuntimeError("connection reset")
+
+        _install_fake_ms(monkeypatch, behavior=boom)
+        with pytest.raises(NetworkError):
+            svc._ms_snapshot_download(
+                model_id="o/n",
+                patterns=["*.json"],
+                local_dir=tmp_path,
+                revision=None,
+                token=None,
+            )
+
+    def test_token_与_revision_条件透传(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict = {}
+
+        def fake(**kwargs):
+            captured.update(kwargs)
+            return str(tmp_path)
+
+        _install_fake_ms(monkeypatch, behavior=fake)
+        # 不传 revision/token：kwargs 中不应出现这两个键
+        svc._ms_snapshot_download(
+            model_id="o/n",
+            patterns=["*.json"],
+            local_dir=tmp_path,
+            revision=None,
+            token=None,
+        )
+        assert "revision" not in captured
+        assert "token" not in captured
+
+        captured.clear()
+        svc._ms_snapshot_download(
+            model_id="o/n",
+            patterns=["*.json"],
+            local_dir=tmp_path,
+            revision="v2",
+            token="abc",
+        )
+        assert captured["revision"] == "v2"
+        assert captured["token"] == "abc"
+
+
+# ============================================================
+# fetch_files 端到端
 # ============================================================
 
 
 class TestFetchFiles:
-    def test_无文件_报错(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(svc, "_list_repo_files", lambda *a, **kw: [])
-        with pytest.raises(CommandError) as exc:
-            svc.fetch_files("o/n", ["x"], output=tmp_path)
-        assert "没有可拉取" in exc.value.message
+    def test_参数校验异常_先于_SDK_调用(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def must_not_call(**kwargs):
+            raise AssertionError("不应该调用 SDK")
 
-    def test_表达式未命中(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(svc, "_list_repo_files", lambda *a, **kw: ["config.json"])
-        with pytest.raises(CommandError):
-            svc.fetch_files("o/n", ["weights*.bin"], output=tmp_path)
+        monkeypatch.setattr(svc, "_hf_snapshot_download", must_not_call)
+        monkeypatch.setattr(svc, "_ms_snapshot_download", must_not_call)
+        with pytest.raises(ValidationError):
+            svc.fetch_files("bad-repo-no-slash", ["x"], output=tmp_path)
 
-    def test_默认_output_目录_为_org_name(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(svc, "_list_repo_files", lambda *a, **kw: ["config.json"])
-        monkeypatch.setattr(svc, "_download_one", lambda url, dest, **kw: dest.write_bytes(b"x") or 1)
+    def test_默认_output_为_org_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_hf(**kwargs):
+            local = Path(kwargs["local_dir"])
+            (local / "config.json").write_bytes(b"data")
+            return local
+
+        monkeypatch.setattr(svc, "_hf_snapshot_download", fake_hf)
         monkeypatch.chdir(tmp_path)
         result = svc.fetch_files("Org/Name", ["config.json"])
         assert result.output_dir == tmp_path / "Org" / "Name"
         assert (tmp_path / "Org" / "Name" / "config.json").exists()
+        assert len(result.files) == 1
+        assert result.files[0].repo_path == "config.json"
+        assert result.files[0].size == 4
 
-    def test_glob_命中多个_保留路径结构(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        files = ["configuration_a.py", "configuration_b.py", "model.bin", "src/configuration_inner.py"]
-        monkeypatch.setattr(svc, "_list_repo_files", lambda *a, **kw: files)
+    def test_来源_modelscope_走_ms_分支(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def must_not_call(**kwargs):
+            raise AssertionError("不应该走 HF")
 
-        downloaded: list[str] = []
-
-        def fake_dl(url, dest, **kw):  # type: ignore[no-untyped-def]
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(b"py")
-            downloaded.append(str(dest.relative_to(tmp_path)))
-            return 2
-
-        monkeypatch.setattr(svc, "_download_one", fake_dl)
-        result = svc.fetch_files("o/n", ["configuration_*.py"], output=tmp_path)
-        # 单段 glob 命中任意层级，3 个 .py 文件都应被下载
-        assert {f.repo_path for f in result.files} == {
-            "configuration_a.py",
-            "configuration_b.py",
-            "src/configuration_inner.py",
-        }
-        assert (tmp_path / "src" / "configuration_inner.py").exists()
-
-    def test_文件级回调顺序(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(svc, "_list_repo_files", lambda *a, **kw: ["a.json", "b.json"])
-        monkeypatch.setattr(svc, "_download_one", lambda url, dest, **kw: dest.write_bytes(b"x") or 1)
-
-        events: list[tuple[str, str, int, int]] = []
-        svc.fetch_files(
-            "o/n",
-            ["*.json"],
-            output=tmp_path,
-            on_file_start=lambda rel, idx, total: events.append(("start", rel, idx, total)),
-            on_file_done=lambda rel, idx, total: events.append(("done", rel, idx, total)),
-        )
-        assert events == [
-            ("start", "a.json", 1, 2),
-            ("done", "a.json", 1, 2),
-            ("start", "b.json", 2, 2),
-            ("done", "b.json", 2, 2),
-        ]
-
-    def test_modelscope_来源_构造_url(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(svc, "_list_repo_files", lambda *a, **kw: ["config.json"])
         captured: dict = {}
 
-        def fake_dl(url, dest, **kw):  # type: ignore[no-untyped-def]
-            captured["url"] = url
-            dest.write_bytes(b"x")
-            return 1
+        def fake_ms(**kwargs):
+            captured.update(kwargs)
+            local = Path(kwargs["local_dir"])
+            (local / "configuration_x.py").write_bytes(b"py")
+            return local
 
-        monkeypatch.setattr(svc, "_download_one", fake_dl)
-        svc.fetch_files("Qwen/Q", ["config.json"], source="modelscope", output=tmp_path)
-        assert "modelscope.cn" in captured["url"]
-        assert "FilePath=config.json" in captured["url"]
+        monkeypatch.setattr(svc, "_hf_snapshot_download", must_not_call)
+        monkeypatch.setattr(svc, "_ms_snapshot_download", fake_ms)
+        result = svc.fetch_files(
+            "Qwen/Q",
+            ["configuration_*.py"],
+            source="modelscope",
+            output=tmp_path,
+        )
+        assert result.source == "modelscope"
+        assert captured["model_id"] == "Qwen/Q"
+        assert captured["patterns"] == ["configuration_*.py"]
+        assert len(result.files) == 1
 
-    def test_input_校验异常_先于网络(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 即使 _list_repo_files 会抛异常，参数校验应先生效
-        def must_not_call(*a, **kw):
-            raise AssertionError("不应该调用网络层")
+    def test_下载后_零文件_报错(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_hf(**kwargs):
+            return Path(kwargs["local_dir"])  # 不写入任何文件
 
-        monkeypatch.setattr(svc, "_list_repo_files", must_not_call)
-        with pytest.raises(ValidationError):
-            svc.fetch_files("bad-repo-no-slash", ["x"], output=tmp_path)
+        monkeypatch.setattr(svc, "_hf_snapshot_download", fake_hf)
+        with pytest.raises(CommandError) as exc:
+            svc.fetch_files("o/n", ["*.bin"], output=tmp_path)
+        assert "未下载到任何文件" in exc.value.message
+
+    def test_无_patterns_走_skip_weights_模式(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """patterns=None 时应转发为 ignore_patterns=WEIGHT_IGNORE_PATTERNS"""
+        captured: dict = {}
+
+        def fake_hf(**kwargs):
+            captured.update(kwargs)
+            local = kwargs["local_dir"]
+            (local / "config.json").write_bytes(b"{}")
+            (local / "tokenizer.json").write_bytes(b"{}")
+            (local / "configuration_x.py").write_bytes(b"# code")
+            return local
+
+        monkeypatch.setattr(svc, "_hf_snapshot_download", fake_hf)
+        result = svc.fetch_files("o/n", None, output=tmp_path)
+        # 服务层把空 patterns 转换为 [] 后透传
+        assert captured["patterns"] == []
+        # 端到端拉到的 3 个非权重文件全部进入结果
+        rels = {f.repo_path for f in result.files}
+        assert rels == {"config.json", "tokenizer.json", "configuration_x.py"}
+
+    def test_空列表_等价于_无_patterns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict = {}
+
+        def fake_hf(**kwargs):
+            captured.update(kwargs)
+            local = kwargs["local_dir"]
+            (local / "config.json").write_bytes(b"{}")
+            return local
+
+        monkeypatch.setattr(svc, "_hf_snapshot_download", fake_hf)
+        svc.fetch_files("o/n", [], output=tmp_path)
+        assert captured["patterns"] == []
+
+    def test_skip_weights_命中_零文件_走专用错误(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """权重纯仓库下，跳过权重后会得到 0 文件，错误信息应能区分模式"""
+
+        def fake_hf(**kwargs):
+            return Path(kwargs["local_dir"])  # 啥都不写
+
+        monkeypatch.setattr(svc, "_hf_snapshot_download", fake_hf)
+        with pytest.raises(CommandError) as exc:
+            svc.fetch_files("o/n", None, output=tmp_path)
+        assert "跳过权重" in exc.value.message
+
+    def test_revision_空白_视为_None_透传(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict = {}
+
+        def fake_hf(**kwargs):
+            captured.update(kwargs)
+            local = Path(kwargs["local_dir"])
+            (local / "f.json").write_bytes(b"x")
+            return local
+
+        monkeypatch.setattr(svc, "_hf_snapshot_download", fake_hf)
+        svc.fetch_files("o/n", ["f.json"], revision="   ", output=tmp_path)
+        assert captured["revision"] is None
+
+    def test_保留_snapshot_root_路径(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 模拟 SDK 把文件放到了 cache 路径而不是用户传入的 local_dir
+        cache_dir = tmp_path / "cache_pretend"
+        cache_dir.mkdir()
+        (cache_dir / "config.json").write_bytes(b"abc")
+
+        def fake_hf(**kwargs):
+            return cache_dir
+
+        monkeypatch.setattr(svc, "_hf_snapshot_download", fake_hf)
+        result = svc.fetch_files(
+            "o/n", ["config.json"], output=tmp_path / "user_chose"
+        )
+        # output_dir 应反映 SDK 实际落盘位置，避免给用户错误的路径暗示
+        assert result.output_dir == cache_dir
+        assert result.files[0].local_path == cache_dir / "config.json"

@@ -28,6 +28,8 @@ dependencies = [
     "rawpy>=0.20.0",
     "cairosvg>=2.7.0",
     "google-genai>=0.3.0",
+    "huggingface-hub>=0.20.0",
+    "modelscope>=1.10.0",
 ]
 
 [project.optional-dependencies]

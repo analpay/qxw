@@ -881,10 +881,29 @@ class TestFetchCommand:
     - 正常路径：参数透传到 service、文本汇总输出
     """
 
-    def test_缺少_patterns(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        code, out = _run(["fetch", "org/name"])
-        assert code == 6
-        assert "至少需要" in out
+    def test_无_patterns_走_skip_weights_模式(
+        self, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """命令行不传 patterns 时，service 应收到 patterns=None 并走跳过权重模式"""
+        from qxw.library.services import llm_fetch_service as svc
+
+        captured: dict = {}
+
+        def fake_fetch(**kwargs):
+            captured.update(kwargs)
+            return svc.FetchResult(
+                repo="org/name",
+                source="huggingface",
+                revision=None,
+                output_dir=tmp_path,
+                files=(svc.FetchedFile(repo_path="config.json", local_path=tmp_path / "config.json", size=2),),
+            )
+
+        monkeypatch.setattr(svc, "fetch_files", fake_fetch)
+        code, out = _run(["fetch", "org/name", "-o", str(tmp_path)])
+        assert code == 0
+        assert captured["patterns"] is None
+        assert "skip-weights" in out
 
     def test_QxwError_退出码透传(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from qxw.library.services import llm_fetch_service as svc
@@ -926,10 +945,6 @@ class TestFetchCommand:
 
         def fake_fetch(**kwargs):
             captured.update(kwargs)
-            # 触发 file lifecycle 让 progress 状态机走全
-            kwargs["on_file_start"]("config.json", 1, 1)
-            kwargs["progress_cb"](100, 100)
-            kwargs["on_file_done"]("config.json", 1, 1)
             return svc.FetchResult(
                 repo="org/name",
                 source="modelscope",
@@ -952,8 +967,6 @@ class TestFetchCommand:
                 str(tmp_path),
                 "-k",
                 "secret",
-                "--timeout",
-                "10",
             ]
         )
         assert code == 0
@@ -963,27 +976,27 @@ class TestFetchCommand:
         assert captured["revision"] == "v1"
         assert str(tmp_path) == str(captured["output"])
         assert captured["token"] == "secret"
-        assert captured["timeout"] == 10.0
         assert "已下载 1 个文件" in out
         assert "config.json" in out
 
-    def test_progress_无_Content_Length_收尾(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """on_file_done 在 total=None 时按已写入字节数补齐 total，避免进度条卡住"""
+    def test_revision_缺省_为_None(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """命令行不显式指定 --revision 时，应以 None 透传给 service 让 SDK 用各自默认值"""
         from qxw.library.services import llm_fetch_service as svc
 
+        captured: dict = {}
+
         def fake_fetch(**kwargs):
-            kwargs["on_file_start"]("a.bin", 1, 1)
-            # 模拟服务端未返回 Content-Length：total = 0
-            kwargs["progress_cb"](42, 0)
-            kwargs["on_file_done"]("a.bin", 1, 1)
+            captured.update(kwargs)
             return svc.FetchResult(
                 repo="o/n",
                 source="huggingface",
-                revision="main",
+                revision=None,
                 output_dir=tmp_path,
                 files=(svc.FetchedFile(repo_path="a.bin", local_path=tmp_path / "a.bin", size=42),),
             )
 
         monkeypatch.setattr(svc, "fetch_files", fake_fetch)
-        code, _ = _run(["fetch", "o/n", "a.bin", "-o", str(tmp_path)])
+        code, out = _run(["fetch", "o/n", "a.bin", "-o", str(tmp_path)])
         assert code == 0
+        assert captured["revision"] is None
+        assert "(default)" in out
