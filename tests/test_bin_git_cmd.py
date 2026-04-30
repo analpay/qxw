@@ -52,7 +52,9 @@ class TestTopLevel:
 # ============================================================
 
 
-def _fake_result(tmp_path: Path, ref: str | None = None) -> ArchiveResult:
+def _fake_result(
+    tmp_path: Path, ref: str | None = None, excluded: int = 0
+) -> ArchiveResult:
     out = tmp_path / "demo.tar"
     out.write_bytes(b"x" * 2048)
     return ArchiveResult(
@@ -61,6 +63,7 @@ def _fake_result(tmp_path: Path, ref: str | None = None) -> ArchiveResult:
         archive_size=2048,
         lfs_pulled=True,
         ref=ref,
+        excluded_count=excluded,
     )
 
 
@@ -199,6 +202,81 @@ class TestArchiveSuccess:
         code, out = _run(["archive", str(tmp_path), "-r", "release-1.2"])
         assert code == 0
         assert "release-1.2" in out
+
+    def test_未指定_exclude_时透传_None(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy(**kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return _fake_result(tmp_path)
+
+        monkeypatch.setattr(git_mod, "archive_repo", _spy)
+        code, _ = _run(["archive", str(tmp_path)])
+        assert code == 0
+        # 未传 -e 时，CLI 应把 excludes 透传成 None（让服务层走默认排除）
+        assert captured["excludes"] is None
+
+    def test_单个_exclude_透传(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy(**kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return _fake_result(tmp_path)
+
+        monkeypatch.setattr(git_mod, "archive_repo", _spy)
+        code, _ = _run(["archive", str(tmp_path), "-e", "docs"])
+        assert code == 0
+        assert captured["excludes"] == ["docs"]
+
+    def test_多个_exclude_累积透传_顺序保留(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured: dict[str, object] = {}
+
+        def _spy(**kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return _fake_result(tmp_path)
+
+        monkeypatch.setattr(git_mod, "archive_repo", _spy)
+        code, _ = _run(
+            [
+                "archive",
+                str(tmp_path),
+                "-e",
+                "docs",
+                "--exclude",
+                "*.md",
+                "-e",
+                "tests/fixtures",
+            ]
+        )
+        assert code == 0
+        assert captured["excludes"] == ["docs", "*.md", "tests/fixtures"]
+
+    def test_table_显示_已排除_数量(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            git_mod, "archive_repo", lambda **_: _fake_result(tmp_path, excluded=7)
+        )
+        monkeypatch.setattr(git_mod.console, "width", 240, raising=False)
+        code, out = _run(["archive", str(tmp_path)])
+        assert code == 0
+        assert "已排除" in out
+        assert "7" in out
+
+    def test_exclude_后跟_ValidationError_退出码_6(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _raise(**_):  # type: ignore[no-untyped-def]
+            raise ValidationError("排除项含非法 .. 片段: ../etc")
+
+        monkeypatch.setattr(git_mod, "archive_repo", _raise)
+        code, out = _run(["archive", str(tmp_path), "-e", "../etc"])
+        assert code == 6
+        assert ".." in out
 
 
 # ============================================================

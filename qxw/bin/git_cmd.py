@@ -3,7 +3,7 @@
 git 仓库相关工具集合。当前提供：
 
 - ``archive``: 把 git 仓库打包为 tar / zip 包，包内不含 ``.git`` 目录，
-  且 git-lfs 文件已实体化下载
+  且 git-lfs 文件已实体化下载；默认排除 ``.gitattributes``
 
 用法::
 
@@ -14,6 +14,7 @@ git 仓库相关工具集合。当前提供：
     qxw-git archive /path/to/repo                   # 打包指定路径
     qxw-git archive -r v1.2.0                       # 打包 tag v1.2.0
     qxw-git archive --ref main                      # 打包 main 分支当前提交
+    qxw-git archive -e docs -e '*.md'               # 额外排除目录与 glob
     qxw-git --help                                  # 查看帮助
 """
 
@@ -126,6 +127,17 @@ def main(ctx: click.Context) -> None:
     help="跳过 git lfs pull（不需要实体化 LFS 文件时使用）",
 )
 @click.option(
+    "--exclude",
+    "-e",
+    "excludes",
+    multiple=True,
+    metavar="PATTERN",
+    help=(
+        "额外排除项，可重复指定。支持精确路径（a/b.txt）、目录前缀（docs）、"
+        "glob（*.md / test_*.py）。默认会自动排除 .gitattributes。"
+    ),
+)
+@click.option(
     "--quiet",
     "-q",
     is_flag=True,
@@ -139,6 +151,7 @@ def archive_command(
     prefix: str | None,
     ref: str | None,
     no_lfs: bool,
+    excludes: tuple[str, ...],
     quiet: bool,
 ) -> None:
     """把 git 项目打包为 tar / zip 包
@@ -148,6 +161,7 @@ def archive_command(
     - 包内不含 .git 目录（仅打包 git ls-files 列出的跟踪文件）
     - 默认在打包前执行 git lfs pull，确保 LFS 指针文件已实体化为真实内容
     - 默认格式 tar；可通过 -f 切换为 tar.gz / tar.bz2 / tar.xz / zip
+    - 默认自动排除 .gitattributes；可通过 -e/--exclude 增加额外排除项（可重复）
 
     \b
     示例:
@@ -159,6 +173,8 @@ def archive_command(
         qxw-git archive -r main                 # 打包 main 分支当前提交
         qxw-git archive -r v1.2.0 -f tar.gz     # 打包 tag v1.2.0 为 tar.gz
         qxw-git archive --ref feature/x         # 含 / 的分支名也支持
+        qxw-git archive -e docs -e '*.md'       # 额外排除 docs/ 与所有 .md
+        qxw-git archive -e tests/fixtures       # 排除单个目录
     """
     try:
         repo_path = repo if repo is not None else Path.cwd()
@@ -169,16 +185,18 @@ def archive_command(
             pull_lfs=not no_lfs,
             arcname_prefix=prefix,
             ref=ref,
+            excludes=list(excludes) if excludes else None,
         )
 
         logger.info(
-            "qxw-git archive: src=%s ref=%s out=%s files=%d size=%d lfs_pulled=%s",
+            "qxw-git archive: src=%s ref=%s out=%s files=%d size=%d lfs_pulled=%s excluded=%d",
             repo_path,
             ref or "<working-tree>",
             result.output_path,
             result.file_count,
             result.archive_size,
             result.lfs_pulled,
+            result.excluded_count,
         )
 
         if quiet:
@@ -193,6 +211,7 @@ def archive_command(
         table.add_row("文件数", str(result.file_count))
         table.add_row("包大小", _human_size(result.archive_size))
         table.add_row("LFS 已 pull", "是" if result.lfs_pulled else "否")
+        table.add_row("已排除", str(result.excluded_count))
         console.print(table)
 
     except QxwError as e:

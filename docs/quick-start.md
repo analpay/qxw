@@ -310,11 +310,15 @@ qxw-git archive -r main
 qxw-git archive --ref v1.2.0 -f tar.gz
 qxw-git archive -r feature/foo               # 含 / 的分支名也支持
 
+# 排除文件 / 目录 / glob（默认已自动排除 .gitattributes）
+qxw-git archive -e docs                      # 排除 docs/ 目录
+qxw-git archive -e '*.md' -e tests/fixtures  # 同时排除多个
+
 # 脚本捕获生成包路径
 ARCHIVE=$(qxw-git archive --quiet)
 ```
 
-> 打包的文件清单来自 `git ls-files`，自动忽略 `.git` 与 `.gitignore` 命中的内容。
+> 打包的文件清单来自 `git ls-files`，自动忽略 `.git` 与 `.gitignore` 命中的内容；并默认追加排除 `.gitattributes`（已实体化的 LFS 内容不再需要它）。
 > 仓库引用了 LFS 但当前环境未装 git-lfs 时，命令会拒绝继续，避免输出"看起来是 LFS 文件，实际只是指针"的损坏包；想绕过加 `--no-lfs` 即可。
 
 ## 14. 下一步

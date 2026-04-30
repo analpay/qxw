@@ -602,6 +602,263 @@ class TestRefArchive:
         assert out.exists()
 
 
+class TestExcludes:
+    """``excludes`` 参数与默认排除 .gitattributes 行为"""
+
+    def _setup_with_attrs(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "exc"
+        _init_repo(repo)
+        _add_and_commit(
+            repo,
+            {
+                ".gitattributes": "* text=auto\n",
+                "README.md": "# x\n",
+                "docs/a.md": "a",
+                "docs/sub/b.md": "b",
+                "src/app.py": "p",
+                "tests/fixtures/data.bin": "d",
+                "config/local.yaml": "y",
+            },
+        )
+        return repo
+
+    def test_默认排除_gitattributes(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        result = svc.archive_repo(repo)
+        with tarfile.open(result.output_path) as tar:
+            names = tar.getnames()
+        # .gitattributes 不应出现在包中
+        assert all(not n.endswith(".gitattributes") for n in names)
+        # 其他文件正常被打包
+        assert "exc/README.md" in names
+        assert result.excluded_count == 1
+
+    def test_关闭默认排除_保留_gitattributes(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        result = svc.archive_repo(repo, include_default_excludes=False)
+        with tarfile.open(result.output_path) as tar:
+            names = tar.getnames()
+        assert "exc/.gitattributes" in names
+        assert result.excluded_count == 0
+
+    def test_目录前缀_排除整棵子树(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        result = svc.archive_repo(repo, excludes=["docs"])
+        with tarfile.open(result.output_path) as tar:
+            names = tar.getnames()
+        assert all(not n.startswith("exc/docs/") for n in names)
+        # 不应误伤同名前缀文件
+        assert "exc/README.md" in names
+        assert "exc/src/app.py" in names
+        # docs/a.md + docs/sub/b.md + .gitattributes = 3
+        assert result.excluded_count == 3
+
+    def test_精确路径_只排除单个文件(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        result = svc.archive_repo(repo, excludes=["config/local.yaml"])
+        with tarfile.open(result.output_path) as tar:
+            names = set(tar.getnames())
+        assert "exc/config/local.yaml" not in names
+        # 同目录其他文件不动（虽然这个例子 config 目录就一个文件，但前缀相同的不应被误判）
+        assert result.excluded_count == 2  # local.yaml + .gitattributes
+
+    def test_glob_无斜杠_命中任意层级(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        result = svc.archive_repo(repo, excludes=["*.md"])
+        with tarfile.open(result.output_path) as tar:
+            names = tar.getnames()
+        assert all(not n.endswith(".md") for n in names)
+        # 顶层 .md + docs 内 .md 都该被排除
+        assert "exc/README.md" not in names
+        assert "exc/docs/a.md" not in names
+        assert "exc/docs/sub/b.md" not in names
+
+    def test_glob_含斜杠_仅按完整路径匹配(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        # docs/*.md 仅命中 docs 一级，不命中 docs/sub/b.md
+        result = svc.archive_repo(repo, excludes=["docs/*.md"])
+        with tarfile.open(result.output_path) as tar:
+            names = set(tar.getnames())
+        assert "exc/docs/a.md" not in names
+        assert "exc/docs/sub/b.md" in names
+
+    def test_多个_excludes_叠加(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        result = svc.archive_repo(
+            repo, excludes=["tests/fixtures", "*.md", "config/local.yaml"]
+        )
+        with tarfile.open(result.output_path) as tar:
+            names = set(tar.getnames())
+        assert "exc/src/app.py" in names
+        assert all(not n.endswith(".md") for n in names)
+        assert "exc/tests/fixtures/data.bin" not in names
+        assert "exc/config/local.yaml" not in names
+
+    def test_excludes_去重(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        # 同一规则给多次不应导致 excluded_count 重复计数
+        result = svc.archive_repo(repo, excludes=["docs", "docs", "docs/"])
+        # 与单次 excludes=["docs"] 的统计应一致
+        baseline = svc.archive_repo(
+            repo, excludes=["docs"], output=tmp_path / "base.tar"
+        )
+        assert result.excluded_count == baseline.excluded_count
+
+    def test_excludes_首尾斜杠_反斜杠_归一化(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        # /docs/ 与 docs\\ 都应等价于 docs
+        result = svc.archive_repo(repo, excludes=["/docs/", "docs\\"])
+        with tarfile.open(result.output_path) as tar:
+            names = tar.getnames()
+        assert all(not n.startswith("exc/docs/") for n in names)
+
+    def test_排除项含双点_抛_ValidationError(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        with pytest.raises(ValidationError) as ei:
+            svc.archive_repo(repo, excludes=["../etc"])
+        assert ".." in ei.value.message
+
+    def test_排除项含双点位于中段_也被拒绝(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        with pytest.raises(ValidationError):
+            svc.archive_repo(repo, excludes=["docs/../secrets"])
+
+    def test_排除项全部空白_视为无规则_仍走默认(self, tmp_path: Path) -> None:
+        repo = self._setup_with_attrs(tmp_path)
+        # 空字符串 / 仅空白 / None 都该被过滤掉，不会误命中所有文件
+        result = svc.archive_repo(repo, excludes=["", "   ", None])  # type: ignore[list-item]
+        with tarfile.open(result.output_path) as tar:
+            names = tar.getnames()
+        assert "exc/README.md" in names
+        # .gitattributes 仍由默认排除拦截
+        assert all(not n.endswith(".gitattributes") for n in names)
+        assert result.excluded_count == 1
+
+    def test_所有跟踪文件都被排除_抛_CommandError(self, tmp_path: Path) -> None:
+        repo = tmp_path / "only_attr"
+        _init_repo(repo)
+        _add_and_commit(repo, {".gitattributes": "* text=auto\n", "a.md": "x"})
+        with pytest.raises(CommandError) as ei:
+            svc.archive_repo(repo, excludes=["*.md"])  # 默认还会再吃掉 .gitattributes
+        assert "排除规则过滤后" in ei.value.message
+
+    def test_excludes_不影响_lfs_检测(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """即便 .gitattributes 被默认排除，仍要根据它检测 LFS"""
+        repo = tmp_path / "lfs_attr"
+        _init_repo(repo)
+        _add_and_commit(
+            repo,
+            {
+                ".gitattributes": "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+                "keep.txt": "k",
+            },
+        )
+
+        # 模拟仓库需要 LFS 且 LFS 可用
+        monkeypatch.setattr(svc, "_detect_lfs", lambda _r: (True, True))
+        recorded: list[list[str]] = []
+        orig = svc._run_git
+
+        def _spy(args: list[str], cwd: Path):  # type: ignore[no-untyped-def]
+            recorded.append(args)
+            if args[:2] == ["lfs", "pull"]:
+                return subprocess.CompletedProcess(args=["git", *args], returncode=0, stdout="", stderr="")
+            return orig(args, cwd)
+
+        monkeypatch.setattr(svc, "_run_git", _spy)
+        result = svc.archive_repo(repo)
+        # LFS pull 仍应执行（说明默认排除 .gitattributes 不会影响检测）
+        assert ["lfs", "pull"] in recorded
+        assert result.lfs_pulled is True
+        with tarfile.open(result.output_path) as tar:
+            names = tar.getnames()
+        assert all(not n.endswith(".gitattributes") for n in names)
+        assert "lfs_attr/keep.txt" in names
+
+    def test_excludes_在_ref_分支模式下生效(self, tmp_path: Path) -> None:
+        repo = _setup_two_branches(tmp_path)
+        # 给 main 分支额外加一个 .gitattributes 以测试默认排除在 worktree 路径下也生效
+        _git(["checkout", "-q", "main"], cwd=repo)
+        (repo / ".gitattributes").write_text("* text=auto\n", encoding="utf-8")
+        _git(["add", "-A"], cwd=repo)
+        _git(["commit", "-q", "-m", "add attrs"], cwd=repo)
+        _git(["checkout", "-q", "feature/foo"], cwd=repo)
+
+        result = svc.archive_repo(repo, ref="main", excludes=["only_main.txt"])
+        with tarfile.open(result.output_path) as tar:
+            names = set(tar.getnames())
+        assert "branched/.gitattributes" not in names  # 默认排除
+        assert "branched/only_main.txt" not in names  # 自定义排除
+        assert "branched/shared.txt" in names
+
+
+class TestNormalizeExcludes:
+    """直接测 :func:`_normalize_excludes` 的纯逻辑分支"""
+
+    def test_空输入_仅返回默认(self) -> None:
+        assert svc._normalize_excludes(None) == svc.DEFAULT_EXCLUDES
+        assert svc._normalize_excludes([]) == svc.DEFAULT_EXCLUDES
+
+    def test_关闭默认_空输入_返回空(self) -> None:
+        assert svc._normalize_excludes(None, include_defaults=False) == ()
+        assert svc._normalize_excludes([], include_defaults=False) == ()
+
+    def test_去重保序(self) -> None:
+        out = svc._normalize_excludes(["b", "a", "b", "a"], include_defaults=False)
+        assert out == ("b", "a")
+
+    def test_空白条目被过滤(self) -> None:
+        out = svc._normalize_excludes(["", "   ", "\t", "x"], include_defaults=False)
+        assert out == ("x",)
+
+    def test_反斜杠归一_首尾斜杠剥离(self) -> None:
+        out = svc._normalize_excludes(["a\\b\\", "/c/"], include_defaults=False)
+        assert out == ("a/b", "c")
+
+    def test_含_dotdot_抛_ValidationError(self) -> None:
+        with pytest.raises(ValidationError):
+            svc._normalize_excludes([".."], include_defaults=False)
+        with pytest.raises(ValidationError):
+            svc._normalize_excludes(["a/../b"], include_defaults=False)
+
+
+class TestPathMatchesExclude:
+    """直接测 :func:`_path_matches_exclude` 的三类匹配规则"""
+
+    def test_精确路径_命中(self) -> None:
+        assert svc._path_matches_exclude("a/b.txt", "a/b.txt") is True
+
+    def test_精确路径_前缀同名不误命中(self) -> None:
+        assert svc._path_matches_exclude("ab.txt", "a") is False
+
+    def test_目录前缀_命中子树(self) -> None:
+        assert svc._path_matches_exclude("docs/a.md", "docs") is True
+        assert svc._path_matches_exclude("docs/sub/b.md", "docs") is True
+
+    def test_同名文件按精确匹配命中(self) -> None:
+        # 模式 "docs" 既能命中 docs/ 子树，也命中名字恰为 docs 的文件（精确匹配）
+        assert svc._path_matches_exclude("docs", "docs") is True
+
+    def test_前缀长度不足不会误命中(self) -> None:
+        # 模式 "doc" 不应命中 "docs/a.md"（必须正好以模式 + "/" 开头）
+        assert svc._path_matches_exclude("docs/a.md", "doc") is False
+
+    def test_glob_无斜杠_段级匹配(self) -> None:
+        assert svc._path_matches_exclude("readme.md", "*.md") is True
+        assert svc._path_matches_exclude("docs/a.md", "*.md") is True
+
+    def test_glob_含斜杠_仅按完整路径(self) -> None:
+        assert svc._path_matches_exclude("docs/a.md", "docs/*.md") is True
+        assert svc._path_matches_exclude("docs/sub/b.md", "docs/*.md") is False
+
+    def test_glob_问号与方括号(self) -> None:
+        assert svc._path_matches_exclude("a1.txt", "a?.txt") is True
+        assert svc._path_matches_exclude("a1.txt", "a[12].txt") is True
+        assert svc._path_matches_exclude("a3.txt", "a[12].txt") is False
+
+
 class TestSanitizeRefForFilename:
     def test_斜杠_反斜杠_冒号_空白_全部替换为下划线(self) -> None:
         assert svc._sanitize_ref_for_filename("feature/foo") == "feature_foo"

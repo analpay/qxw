@@ -1349,6 +1349,8 @@ qxw-math -q "sqrt(2)"  # 1.4142135623730951
 
 git 仓库相关工具集。当前提供 `archive` 子命令：把一个 git 工作树打包为 tar / zip，包内 **不含** `.git` 目录，且 git-lfs 文件已提前 `git lfs pull` 实体化为真实内容（而不是停留在指针文件）。
 
+> 默认会自动排除 `.gitattributes`（LFS 内容已实体化，保留它反而让收件人困惑）；可通过 `-e/--exclude` 追加更多排除项。
+
 ### 子命令概览
 
 | 子命令 | 说明 |
@@ -1381,6 +1383,11 @@ qxw-git archive -r main
 qxw-git archive -r v1.2.0 -f tar.gz
 qxw-git archive --ref feature/foo            # 含 / 的分支名也支持
 
+# 排除指定文件 / 目录 / glob（默认已自动排除 .gitattributes）
+qxw-git archive -e docs                      # 排除整个 docs/ 目录
+qxw-git archive -e '*.md' -e tests/fixtures  # 同时排除所有 .md 与某个目录
+qxw-git archive -e config/local.yaml         # 排除单个文件（精确路径）
+
 # 仅输出生成包路径（脚本场景）
 ARCHIVE=$(qxw-git archive --quiet)
 echo "$ARCHIVE"
@@ -1396,6 +1403,7 @@ echo "$ARCHIVE"
 | `--prefix` | - | 仓库目录名 | 包内顶层目录名（类似 `git archive --prefix=`） |
 | `--ref` | `-r` | 当前工作树 | 要打包的分支 / tag / commit-ish；任意 `git rev-parse` 可解析的引用都行 |
 | `--no-lfs` | - | false | 跳过 `git lfs pull`；仓库引用了 LFS 但 git-lfs 不可用时也可用此项绕过 |
+| `--exclude` | `-e` | `.gitattributes`（默认追加） | 排除项，可重复指定。支持精确路径（`a/b.txt`）、目录前缀（`docs`）、glob（`*.md` / `test_*.py`） |
 | `--quiet` | `-q` | false | 仅输出生成包路径，便于 `$(...)` 捕获 |
 | `--help` | - | - | 显示帮助 |
 
@@ -1407,6 +1415,7 @@ echo "$ARCHIVE"
 - **顶层目录**：默认 = 仓库目录名，可用 `--prefix` 覆盖（与 `git archive --prefix=release/` 语义一致）
 - **`--ref` 内部实现**：以 `git worktree add --detach <ref> <临时目录>` 在临时目录里签出目标提交，**主工作树不会被切换或污染**；签出后在临时目录内执行 LFS pull、打包，结束时自动 `git worktree remove --force` 清理。共享 `.git/objects` 与 `.git/lfs`，已 pull 过的对象不会重复下载
 - **`--ref` 输出名**：缺省为 `<repo>-<sanitized_ref>.<fmt>`；ref 中的 `/` `\` `:` 与空白会被替换为 `_`（例如 `feature/foo` → `feature_foo`）
+- **排除规则**：默认追加 `.gitattributes`；`-e/--exclude` 可叠加：① 含 `*` `?` `[` 视为 glob（`*.md` 既匹配 `readme.md` 也匹配 `docs/readme.md`）；② 否则按路径精确匹配 `a/b/c.txt` 或目录前缀 `docs` 命中 `docs/...`；③ 路径中含 `..` 会被拒绝；④ 若所有跟踪文件都被排除则报错
 
 ### 输出示例
 
@@ -1419,6 +1428,7 @@ $ qxw-git archive -r v1.2.0 -f zip -o /tmp/myrepo.zip
 │ 文件数      │ 128                             │
 │ 包大小      │ 4.32 MB                         │
 │ LFS 已 pull │ 是                              │
+│ 已排除      │ 1                               │
 └─────────────┴─────────────────────────────────┘
 ```
 
@@ -1428,8 +1438,8 @@ $ qxw-git archive -r v1.2.0 -f zip -o /tmp/myrepo.zip
 |--------|----------|
 | 0 | 打包成功 |
 | 2 | Click 参数校验失败（如 `--format` 不在允许列表内） |
-| 4 | git 命令执行失败（不在 git 仓库 / 找不到 git 命令 / 仓库需要 LFS 但 git-lfs 不可用，`CommandError`） |
-| 6 | 路径不存在 / 路径不是目录 / 不支持的打包格式 / 空 prefix / `--ref` 不存在（`ValidationError`） |
+| 4 | git 命令执行失败（不在 git 仓库 / 找不到 git 命令 / 仓库需要 LFS 但 git-lfs 不可用 / 排除规则把所有文件都过滤掉，`CommandError`） |
+| 6 | 路径不存在 / 路径不是目录 / 不支持的打包格式 / 空 prefix / `--ref` 不存在 / 排除项含 `..` 越界片段（`ValidationError`） |
 | 130 | 用户 Ctrl-C 中断 |
 | 1 | 未预期的内部错误 |
 
