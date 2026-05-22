@@ -1,0 +1,46 @@
+{
+    "host": "127.0.0.1",
+    "port": 8080,
+    "model": "qxw-mock-1",
+    "default": {
+        "ttft_ms": 2000,
+        "tpot_ms": 15,
+        "tokens": 64,
+        "chunk_min": 1,
+        "chunk_max": 1
+    },
+    "rules": [
+        {
+            "name": "slow-model",
+            "match": {"model": "slow-gpt"},
+            "ttft_ms": 5000,
+            "tpot_ms": 30,
+            "tokens": 200
+        },
+        {
+            "name": "essay-by-content",
+            "match": {"content_contains": "写一篇"},
+            "tokens": 512,
+            "tpot_ms": 10
+        },
+        {
+            "name": "translate-by-regex",
+            "match": {"content_regex": "(?i)\\btranslate\\b|翻译"},
+            "ttft_ms": 1000,
+            "tokens": 128
+        },
+        {
+            "name": "burst-by-header",
+            "match": {"header_name": "X-Mock-Profile", "header_value": "burst"},
+            "chunk_min": 3,
+            "chunk_max": 8
+        },
+        {
+            "name": "any-debug-header",
+            "match": {"header_name": "X-Debug"},
+            "ttft_ms": 0,
+            "tpot_ms": 0,
+            "tokens": 4
+        }
+    ]
+}

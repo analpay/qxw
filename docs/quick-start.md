@@ -136,6 +136,20 @@ qxw-llm fetch bert-base-chinese config.json tokenizer.json
 
 # glob 表达式 + 切换为 ModelScope
 qxw-llm fetch Qwen/Qwen2-7B 'configuration_*.py' --source modelscope
+
+# 启动 OpenAI 兼容的 Mock LLM Web 服务（默认 127.0.0.1:8080，TTFT=2000ms / TPOT=15ms）
+qxw-llm mock
+
+# 自定义节奏 + 监听局域网（用于客户端 / 网关压测）
+qxw-llm mock -H 0.0.0.0 -p 9000 --ttft 500 --tpot 5 --tokens 128
+
+# 随机分块：每个 SSE 事件含 2~8 个 token（验证客户端缓冲行为）
+qxw-llm mock --chunk-min 2 --chunk-max 8
+
+# 用配置文件按请求路由不同 profile（model / 消息内容 / 请求头匹配）
+qxw-llm mock-config > mock.json     # 生成示例配置
+vim mock.json                       # 改成自己的规则
+qxw-llm mock -c mock.json           # 启动并加载
 ```
 
 ## 6. HTTP 服务集合（qxw-serve）

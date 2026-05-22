@@ -56,6 +56,9 @@ qxw-git = "qxw.bin.git_cmd:main"
 [tool.setuptools.packages.find]
 include = ["qxw*"]
 
+[tool.setuptools.package-data]
+"qxw.config" = ["*.json.example"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"

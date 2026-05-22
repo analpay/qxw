@@ -108,6 +108,9 @@ qxw hello --name 开发者
 | `qxw-llm provider set-default` | ⭐ 设为默认提供商 |
 | `qxw-llm provider ping` | 📡 测试指定提供商连接 |
 | `qxw-llm provider ping-all` | 📡 测试所有提供商连接 |
+| `qxw-llm fetch <repo> <files…>` | ⬇️ 从 HuggingFace / ModelScope 拉取仓库文件 |
+| `qxw-llm mock` | 🧪 启动 OpenAI 兼容的 Mock LLM Web 服务（可配置 TTFT/TPOT/chunk + 按请求路由的规则） |
+| `qxw-llm mock-config` | 📄 打印 / 导出 mock 服务的示例配置 JSON |
 
 ## 项目结构
 

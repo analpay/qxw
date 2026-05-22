@@ -21,7 +21,7 @@ skills/
 | Skill | 对应命令 | 主要触发场景 |
 |-------|---------|------------|
 | `qxw` | `qxw list / hello / sbdqf / completion` | 列出全部命令、初始化配置目录、安装 zsh / bash 补全 |
-| `qxw-llm` | `qxw-llm chat / tui / provider / fetch` | 终端 AI 对话、配置 OpenAI / Anthropic Key、从 HuggingFace / ModelScope 拉模型 |
+| `qxw-llm` | `qxw-llm chat / tui / provider / fetch / mock / mock-config` | 终端 AI 对话、配置 OpenAI / Anthropic Key、从 HuggingFace / ModelScope 拉模型、启动 OpenAI 兼容的 Mock LLM 服务（按请求路由 + chunk 分布） |
 | `qxw-serve` | `qxw-serve gitbook / webtool / file-web / image-web` | 本地预览 Markdown、开发者 Web 工具集、文件共享、图片画廊 |
 | `qxw-image` | `qxw-image raw / svg / filter / change / clear` | RAW 转 JPG、SVG 转 PNG、调色滤镜、自动亮度对比饱和、擦除元数据 |
 | `qxw-markdown` | `qxw-markdown wx / cover / summary` | PlantUML 渲染 + 公众号适配、Gemini 生成封面、Gitbook 目录树 |

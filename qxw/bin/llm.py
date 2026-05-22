@@ -16,6 +16,7 @@ QXW AI 对话工具统一入口（合并自 qxw-chat / qxw-chat-provider）。
     qxw-llm provider ping-all         # 测试全部提供商连接
     qxw-llm tui                       # 提供商 TUI 管理界面
     qxw-llm fetch <repo> <files...>   # 从 HF / ModelScope 拉取仓库文件
+    qxw-llm mock                      # 启动 OpenAI 兼容的 Mock LLM Web 服务
 """
 
 import sys
@@ -978,6 +979,264 @@ def fetch_command(
     except KeyboardInterrupt:
         click.echo("\n操作已取消")
         sys.exit(130)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+# ------------------------------------------------------------
+# qxw-llm mock
+# ------------------------------------------------------------
+
+
+@main.command(
+    name="mock",
+    help="启动一个 OpenAI 兼容的 Mock LLM Web 服务（不调用真实模型，按可配置的 TTFT/TPOT/chunk 节奏返回占位 token）",
+    epilog=(
+        "\b\n"
+        "示例:\n"
+        "  qxw-llm mock                              # 默认 127.0.0.1:8080, TTFT=2000ms, TPOT=15ms\n"
+        "  qxw-llm mock -H 0.0.0.0 -p 9000           # 局域网访问\n"
+        "  qxw-llm mock --ttft 500 --tpot 5          # 自定义节奏（便于压测）\n"
+        "  qxw-llm mock --chunk-min 2 --chunk-max 8  # 每个 SSE 事件含 2~8 个 token 随机分块\n"
+        "  qxw-llm mock -c mock.json                 # 用配置文件按请求路由不同 profile\n"
+        "\b\n"
+        "生成示例配置文件:\n"
+        "  qxw-llm mock-config > mock.json"
+    ),
+)
+@click.option("--host", "-H", default="127.0.0.1", show_default=True, help="监听地址")
+@click.option("--port", "-p", default=8080, show_default=True, type=click.IntRange(0, 65535), help="监听端口")
+@click.option("--ttft", "ttft_ms", default=2000, show_default=True, type=click.IntRange(0, 600_000),
+              help="首 token 延迟（毫秒）；--config 已指定时被忽略")
+@click.option("--tpot", "tpot_ms", default=15, show_default=True, type=click.IntRange(0, 600_000),
+              help="相邻 token 间延迟（毫秒）；--config 已指定时被忽略")
+@click.option("--tokens", "-n", "tokens", default=64, show_default=True, type=click.IntRange(1, 100_000),
+              help="单次响应的 token 数；--config 已指定时被忽略")
+@click.option("--chunk-min", "chunk_min", default=1, show_default=True, type=click.IntRange(1, 100_000),
+              help="单个 SSE 事件包含的最少 token 数；--config 已指定时被忽略")
+@click.option("--chunk-max", "chunk_max", default=1, show_default=True, type=click.IntRange(1, 100_000),
+              help="单个 SSE 事件包含的最多 token 数（>= chunk-min）；--config 已指定时被忽略")
+@click.option("--model", default="qxw-mock-1", show_default=True, help="返回的 model 字段值")
+@click.option(
+    "--config", "-c", "config_path",
+    type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True, path_type=Path),
+    default=None,
+    help="加载 JSON 配置文件，按请求路由不同 profile。用 `qxw-llm mock-config` 生成示例。",
+)
+def mock_command(
+    host: str,
+    port: int,
+    ttft_ms: int,
+    tpot_ms: int,
+    tokens: int,
+    chunk_min: int,
+    chunk_max: int,
+    model: str,
+    config_path: Path | None,
+) -> None:
+    """启动 OpenAI 兼容的 Mock LLM Web 服务
+
+    \b
+    支持的接口（同时兼容 ``/api`` 前缀）:
+        - POST /v1/chat/completions   # OpenAI Chat Completions（支持 stream=True/False）
+        - POST /v1/responses          # OpenAI Responses API（支持 stream=True/False）
+        - GET  /v1/models             # 列出 Mock 模型
+        - GET  /health                # 健康检查
+
+    \b
+    时间模型:
+        - TTFT: 首 token 到达前的固定延迟
+        - TPOT: 相邻两个 token 之间的延迟
+        - chunk_min/max: 单个 SSE 事件包含 [min, max] 个 token（随机均匀）；
+          chunk 只改变事件粒度，不改变总耗时 = TTFT + (N-1)*TPOT
+        - 非流式: 一次性等够 TTFT + (N-1)*TPOT 后整体返回
+
+    \b
+    按请求路由（配置文件）:
+        通过 -c/--config 加载 JSON 配置，可基于以下标识把请求路由到不同 profile：
+          - model              精确匹配请求体的 "model" 字段
+          - content_contains   用户消息文本包含某子串（messages[*].content
+                                或 multi-modal 的 text 字段 / responses 的 input）
+          - content_regex      用户消息文本匹配正则（re.search 语义）
+          - header_name        请求头存在（大小写不敏感）；与 header_value 组合可精确匹配
+        多条件做 AND；规则按列表顺序首次命中即生效；未命中走 default profile。
+
+    \b
+    示例配置:
+        qxw-llm mock-config > mock.json   # 生成内置示例
+        qxw-llm mock -c mock.json         # 启动并加载
+
+    示例配置文件结构详见 ``qxw-llm mock-config`` 输出。
+    """
+    try:
+        from qxw.library.services.llm_mock_service import (
+            MockServerConfig,
+            load_config_from_file,
+            start_server,
+        )
+
+        if config_path is not None:
+            config = load_config_from_file(config_path)
+            # 命令行 host/port/model 仅在配置文件未提供时填默认；这里以"文件 > CLI"为准，
+            # 但允许通过下面打印展示用户当前实际监听值
+        else:
+            config = MockServerConfig(
+                host=host,
+                port=port,
+                ttft_ms=ttft_ms,
+                tpot_ms=tpot_ms,
+                tokens=tokens,
+                chunk_min=chunk_min,
+                chunk_max=chunk_max,
+                model=model,
+            )
+
+        # 横幅以最终生效的配置为准
+        host = config.host
+        port = config.port
+        model = config.model
+        ttft_ms = config.ttft_ms
+        tpot_ms = config.tpot_ms
+        tokens = config.tokens
+        chunk_min = config.chunk_min
+        chunk_max = config.chunk_max
+
+        # 监听 0.0.0.0 时给出的 curl 示例需要换成 127.0.0.1，否则客户端无法连
+        curl_host = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
+        curl_url = f"http://{curl_host}:{port}/v1/chat/completions"
+        curl_payload = (
+            '{"model":"' + model + '","messages":[{"role":"user","content":"hi"}],"stream":true}'
+        )
+
+        console.print(f"🤖 [bold]QXW LLM Mock[/] v{__version__}")
+        if config_path is not None:
+            console.print(f"📄 配置文件: [cyan]{config_path}[/]")
+        console.print(f"🌐 服务地址: [link=http://{host}:{port}]http://{host}:{port}[/link]")
+        console.print(
+            f"⏱  TTFT: [cyan]{ttft_ms}ms[/]   TPOT: [cyan]{tpot_ms}ms[/]   "
+            f"tokens: [cyan]{tokens}[/]   chunk: [cyan][{chunk_min},{chunk_max}][/]   "
+            f"model: [cyan]{model}[/]"
+        )
+        if config.rules:
+            console.print(f"🧭 规则: [cyan]{len(config.rules)}[/] 条")
+            for r in config.rules:
+                m_desc = ", ".join(
+                    f"{k}={v!r}" for k, v in r.match.model_dump(exclude_none=True).items()
+                )
+                override = {
+                    k: getattr(r, k)
+                    for k in ("ttft_ms", "tpot_ms", "tokens", "chunk_min", "chunk_max")
+                    if getattr(r, k) is not None
+                }
+                ov_desc = " ".join(f"{k}={v}" for k, v in override.items()) or "(无覆盖)"
+                console.print(
+                    f"   • [bold]{r.name or '<unnamed>'}[/]  match: [dim]{m_desc}[/]  → [yellow]{ov_desc}[/]"
+                )
+        console.print("📡 接口: [dim]POST /v1/chat/completions  POST /v1/responses  GET /v1/models  GET /health[/]")
+        console.print("\n💡 [bold]示例 curl[/]（流式 chat completions）:")
+        console.print(f"   [green]curl -N {curl_url}[/] \\", soft_wrap=True)
+        console.print("        [green]-H 'Content-Type: application/json'[/] \\", soft_wrap=True)
+        console.print(f"        [green]-d '{curl_payload}'[/]", soft_wrap=True)
+        console.print("\n按 Ctrl+C 停止服务\n")
+
+        start_server(config)
+
+    except OSError as e:
+        if "Address already in use" in str(e) or getattr(e, "errno", 0) == 48:
+            click.echo(f"错误: 端口 {port} 已被占用，请使用 -p 指定其他端口", err=True)
+        else:
+            click.echo(f"错误: {e}", err=True)
+        sys.exit(1)
+    except QxwError as e:
+        logger.error("mock 命令失败: %s", e.message)
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
+    except KeyboardInterrupt:
+        click.echo("\n服务已停止")
+        sys.exit(0)
+    except Exception as e:
+        logger.exception("未预期的错误")
+        click.echo(f"未预期的错误: {e}", err=True)
+        sys.exit(1)
+
+
+# ------------------------------------------------------------
+# qxw-llm mock-config
+# ------------------------------------------------------------
+
+
+@main.command(
+    name="mock-config",
+    help="打印（或写出）一个完整的 mock 配置示例文件，用于 `qxw-llm mock -c <file>`。",
+    epilog=(
+        "\b\n"
+        "示例:\n"
+        "  qxw-llm mock-config                  # 打印到 stdout\n"
+        "  qxw-llm mock-config > mock.json      # 重定向到文件\n"
+        "  qxw-llm mock-config -o mock.json     # 直接写入文件（拒绝覆盖）\n"
+        "  qxw-llm mock-config -o mock.json -f  # 强制覆盖"
+    ),
+)
+@click.option(
+    "--output", "-o", "output",
+    type=click.Path(file_okay=True, dir_okay=False, writable=True, path_type=Path),
+    default=None,
+    help="写入文件路径；省略则打印到 stdout",
+)
+@click.option("--force", "-f", is_flag=True, default=False, help="覆盖已存在的输出文件")
+def mock_config_command(output: Path | None, force: bool) -> None:
+    """打印 / 导出一个完整的 mock 配置示例
+
+    \b
+    示例文件结构（顶层键）:
+        host        监听地址（可选；默认 127.0.0.1）
+        port        监听端口（可选；默认 8080）
+        model       返回的 model 字段值（可选）
+        default     默认 profile（任何字段都可省略，自动回落到内置默认）
+            ttft_ms, tpot_ms, tokens, chunk_min, chunk_max
+        rules       规则列表（按顺序匹配，首个命中即生效）
+
+    \b
+    每条 rule 形态:
+        {
+          "name": "<可读名，仅用于日志>",
+          "match": {                  # 至少一个非空字段
+            "model": "slow-gpt",       # 精确匹配 request.model
+            "content_contains": "翻译", # 用户消息子串
+            "content_regex": "(?i)translate",  # re.search 正则
+            "header_name": "X-Mock-Profile",   # 大小写不敏感
+            "header_value": "burst"            # 与 header_name 一起；省略则只要求 header 存在
+          },
+          "ttft_ms": 1000,            # 以下字段都可省略，省略 = 沿用 default
+          "tpot_ms": 10,
+          "tokens": 256,
+          "chunk_min": 2,
+          "chunk_max": 8
+        }
+    """
+    try:
+        from qxw.library.services.llm_mock_service import read_example_config
+
+        content = read_example_config()
+        if output is None:
+            click.echo(content, nl=False)
+            return
+
+        if output.exists() and not force:
+            click.echo(f"错误: 输出文件已存在: {output}（用 -f 强制覆盖）", err=True)
+            sys.exit(1)
+        try:
+            output.write_text(content, encoding="utf-8")
+        except OSError as e:
+            click.echo(f"错误: 写入失败: {e}", err=True)
+            sys.exit(1)
+        click.echo(f"已生成示例配置: {output}")
+
+    except QxwError as e:
+        click.echo(f"错误: {e.message}", err=True)
+        sys.exit(e.exit_code)
     except Exception as e:
         logger.exception("未预期的错误")
         click.echo(f"未预期的错误: {e}", err=True)

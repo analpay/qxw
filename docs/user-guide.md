@@ -51,6 +51,8 @@
 | `qxw-llm provider ping` | 📡 测试指定提供商连接 |
 | `qxw-llm provider ping-all` | 📡 测试所有提供商连接 |
 | `qxw-llm fetch <repo> <files…>` | ⬇️ 从 HuggingFace / ModelScope 拉取仓库文件（支持 glob 表达式） |
+| `qxw-llm mock` | 🧪 启动 OpenAI 兼容的 Mock LLM Web 服务（可配置 TTFT/TPOT/chunk + 按请求路由的规则） |
+| `qxw-llm mock-config` | 📄 打印 / 导出 mock 服务的示例配置 JSON |
 
 ## qxw
 
@@ -201,6 +203,8 @@ QXW AI 对话工具集合，合并自原 `qxw-chat` / `qxw-chat-provider`。通�
 | `qxw-llm provider ping [name]` | 📡 测试提供商连接（不指定则使用默认提供商） |
 | `qxw-llm provider ping-all` | 📡 测试所有已配置的提供商连接 |
 | `qxw-llm fetch <repo> <files…>` | ⬇️ 从 HuggingFace / ModelScope 拉取仓库文件（支持 glob 表达式） |
+| `qxw-llm mock` | 🧪 启动 OpenAI 兼容的 Mock LLM Web 服务（可配置 TTFT/TPOT/chunk + 按请求路由的规则） |
+| `qxw-llm mock-config` | 📄 打印 / 导出 mock 服务的示例配置 JSON |
 
 ### qxw-llm tui
 
@@ -385,6 +389,184 @@ qxw-llm fetch org/repo '*.json' --revision v1.0 --output ./weights --token <hf_t
 - 遇到 `org/name` 格式非法、表达式含 `..` 越界片段等参数问题，会立刻以校验错误退出（exit_code=6）
 - 仓库 / revision 不存在 → 命令错误（exit_code=4）
 - SDK 内部 HTTP 错误 → 网络错误（exit_code=5）
+
+### qxw-llm mock
+
+启动一个本地 HTTP 服务，模拟 OpenAI `Chat Completions` / `Responses` 接口的行为，**不调用任何真实模型**，按可配置的 `TTFT`（首 token 延迟）和 `TPOT`（token 间间隔）节奏返回预置占位 token。
+
+主要用途：
+
+- 客户端联调（SSE 解析、超时处理、断流恢复）
+- 网关 / 代理压测
+- CI 环境提供稳定的"假"上游
+
+```bash
+# 默认：127.0.0.1:8080，TTFT=2000ms，TPOT=15ms，tokens=64
+qxw-llm mock
+
+# 局域网访问 + 自定义端口
+qxw-llm mock -H 0.0.0.0 -p 9000
+
+# 压测：把节奏调快
+qxw-llm mock --ttft 200 --tpot 5
+
+# 更长输出 / 自定义 model 字段
+qxw-llm mock --tokens 256 --model my-mock
+```
+
+#### 支持的接口（同时兼容 `/api/v1/...` 前缀）
+
+| 方法 + 路径 | 行为 |
+|------|------|
+| `POST /v1/chat/completions` | OpenAI Chat Completions；`stream=true` 走 SSE，`stream=false` 一次性返回 |
+| `POST /v1/responses` | OpenAI Responses API；`stream=true` 按 `response.*` 事件流式输出 |
+| `GET /v1/models` | 列出 mock 模型（id 等于 `--model` 指定的值） |
+| `GET /health` | 健康检查 |
+| `GET /` | 服务元信息（含当前 TTFT / TPOT / tokens / model） |
+| `OPTIONS *` | CORS 预检（`Access-Control-Allow-Origin: *`） |
+
+#### 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--host` | `-H` | `127.0.0.1` | 监听地址 |
+| `--port` | `-p` | `8080` | 监听端口（0–65535） |
+| `--ttft` | - | `2000` | 首 token 延迟（毫秒，0–600000） |
+| `--tpot` | - | `15` | 相邻 token 间延迟（毫秒，0–600000） |
+| `--tokens` | `-n` | `64` | 单次响应的 token 数（1–100000） |
+| `--chunk-min` | - | `1` | 单个 SSE 事件包含的最少 token 数 |
+| `--chunk-max` | - | `1` | 单个 SSE 事件包含的最多 token 数（>= `--chunk-min`） |
+| `--model` | - | `qxw-mock-1` | 响应中 `model` 字段的值 |
+| `--config` | `-c` | (无) | JSON 配置文件路径；给出时 ttft / tpot / tokens / chunk_* / rules 全部由文件决定 |
+
+#### 时间模型 & chunk 分布
+
+- **流式**：sleep `TTFT` → 写 role chunk → 按 `[chunk_min, chunk_max]` 区间随机分组 tokens；
+  组 0 之前再 sleep `(K[0]-1)*TPOT`，之后每组之前 sleep `K[i]*TPOT` → 写 stop chunk → `data: [DONE]`
+- **非流式**：sleep `TTFT + (N - 1) * TPOT` → 一次性返回 JSON
+- **核心不变量**：chunk 分布只改变 SSE 事件粒度，**总耗时永远等于 `TTFT + (N-1)*TPOT`**
+
+```bash
+# 一个 SSE 事件含固定 5 个 token（事件数 = ceil(tokens / 5)）
+qxw-llm mock --tokens 100 --chunk-min 5 --chunk-max 5
+
+# 随机分块：每个事件含 2~8 个 token（事件总数随机）
+qxw-llm mock --chunk-min 2 --chunk-max 8
+```
+
+#### 按请求路由（配置文件）
+
+通过 `-c <file>` 加载 JSON 配置文件后，可基于"请求标识"把请求路由到不同 profile：
+
+| 标识字段 | 含义 |
+|----------|------|
+| `model` | 精确匹配请求体的 `model` 字段 |
+| `content_contains` | 用户消息文本含某子串（取 `messages[*].content` 或多模态 part 的 `text`，或 `input` / `prompt`） |
+| `content_regex` | 用户消息文本匹配正则（`re.search` 语义） |
+| `header_name` | 请求头存在（大小写不敏感）；与 `header_value` 组合做精确匹配；省略 `header_value` 则只要求该 header 非空 |
+
+> 同一规则的多个标识做 **AND**；规则按 `rules` 列表顺序匹配，**首个命中即生效**；未命中走 `default` profile。
+
+配置文件 schema：
+
+```json
+{
+    "host": "127.0.0.1",                       /* 可选 */
+    "port": 8080,                              /* 可选 */
+    "model": "qxw-mock-1",                     /* 可选 */
+    "default": {                               /* 可选；每个字段都可省略 */
+        "ttft_ms": 2000, "tpot_ms": 15, "tokens": 64,
+        "chunk_min": 1, "chunk_max": 1
+    },
+    "rules": [                                 /* 可选；按顺序首条命中即生效 */
+        {
+            "name": "slow-model",              /* 仅用于日志，可省略 */
+            "match": {"model": "slow-gpt"},
+            "ttft_ms": 5000, "tokens": 200     /* 规则的 profile 字段都是可选，未指定 = 沿用 default */
+        },
+        {
+            "name": "essay-by-content",
+            "match": {"content_contains": "写一篇"},
+            "tokens": 512
+        },
+        {
+            "name": "translate-regex",
+            "match": {"content_regex": "(?i)\\btranslate\\b|翻译"},
+            "ttft_ms": 1000
+        },
+        {
+            "name": "burst-by-header",
+            "match": {"header_name": "X-Mock-Profile", "header_value": "burst"},
+            "chunk_min": 3, "chunk_max": 8
+        }
+    ]
+}
+```
+
+> JSON 不允许注释；上方 schema 中的 `/* */` 仅为讲解，**实际配置文件中请删掉**。
+
+直接生成可改的示例文件（推荐起步方式）：
+
+```bash
+qxw-llm mock-config > mock.json        # 打印到 stdout 再重定向
+qxw-llm mock-config -o mock.json       # 直接写入（已存在拒绝）
+qxw-llm mock-config -o mock.json -f    # 强制覆盖
+qxw-llm mock -c mock.json              # 启动并加载
+```
+
+启动后服务横幅会列出已加载的规则及其匹配条件，方便核对。
+
+#### 客户端示例
+
+```bash
+# OpenAI Python SDK 直接指向 mock 服务
+OPENAI_BASE_URL=http://127.0.0.1:8080/v1 OPENAI_API_KEY=anything \
+  python -c "from openai import OpenAI; c=OpenAI(); \
+    print(c.chat.completions.create(model='m', \
+        messages=[{'role':'user','content':'hi'}]).choices[0].message.content)"
+
+# 直接用 curl 验证 SSE
+curl -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}'
+
+# 命中 burst header 规则（随机大块输出）
+curl -N http://127.0.0.1:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'X-Mock-Profile: burst' \
+  -d '{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":true}'
+```
+
+#### 行为约束
+
+- mock 服务**不做任何鉴权**，监听 `0.0.0.0` 时请确保仅暴露在可信网络
+- 占位 token 由内置 token 池循环生成；相同 `tokens` 必然返回相同文本，便于断言
+- TTFT / TPOT 用 `time.sleep` 实现，超低延迟（<1ms）压测建议改用其他专用工具
+- 客户端断开（`BrokenPipeError` / `ConnectionResetError`）时服务端会安静返回，不抛
+- chunk 分布不改变总耗时；只改变 SSE 事件个数（适合验证客户端解析 / 缓冲行为）
+- 配置文件错误（不存在 / 非 JSON / schema 校验失败）→ 退出码 6（`ValidationError`）
+- 端口占用、未预期错误 → 退出码 1；`Ctrl+C` 退出码 0
+
+### qxw-llm mock-config
+
+打印（或导出）一份完整的 mock 配置示例 JSON，方便基于它改成自己的规则。
+
+```bash
+qxw-llm mock-config                  # 打印到 stdout
+qxw-llm mock-config > mock.json      # 重定向到文件
+qxw-llm mock-config -o mock.json     # 直接写入文件（拒绝覆盖）
+qxw-llm mock-config -o mock.json -f  # 强制覆盖
+```
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--output` | `-o` | (无) | 输出文件路径；省略则打印到 stdout |
+| `--force` | `-f` | false | 输出文件已存在时强制覆盖（默认拒绝写入） |
+
+退出码：
+- 0：成功
+- 1：输出文件已存在且未用 `-f` / 写入失败
+- 其它非零：QxwError 透传
 
 ## qxw-serve
 

@@ -979,6 +979,275 @@ class TestFetchCommand:
         assert "已下载 1 个文件" in out
         assert "config.json" in out
 
+class TestMockCommand:
+    """qxw-llm mock 命令分支覆盖
+
+    重点覆盖：
+    - 端口占用 OSError -> 退出码 1
+    - 通用 OSError -> 退出码 1
+    - QxwError -> 透传 exit_code
+    - KeyboardInterrupt -> 退出码 0 + "服务已停止"
+    - 未预期 Exception -> 退出码 1 + "未预期"
+    - 参数合法时正常透传到 MockServerConfig
+    """
+
+    def test_端口占用_OSError(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        def boom(config):
+            raise OSError(48, "Address already in use")
+
+        monkeypatch.setattr(mock_svc, "start_server", boom)
+        code, out = _run(["mock", "-p", "9999"])
+        assert code == 1
+        assert "9999" in out
+        assert "占用" in out
+
+    def test_通用_OSError(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        def boom(config):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(mock_svc, "start_server", boom)
+        code, out = _run(["mock"])
+        assert code == 1
+        assert "错误" in out
+
+    def test_QxwError_透传(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        def boom(config):
+            raise QxwError("mock 启动失败", exit_code=7)
+
+        monkeypatch.setattr(mock_svc, "start_server", boom)
+        code, out = _run(["mock"])
+        assert code == 7
+        assert "mock 启动失败" in out
+
+    def test_KeyboardInterrupt_退出_0(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        def boom(config):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(mock_svc, "start_server", boom)
+        code, out = _run(["mock"])
+        assert code == 0
+        assert "服务已停止" in out
+
+    def test_未预期_Exception_退出_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        def boom(config):
+            raise RuntimeError("oops")
+
+        monkeypatch.setattr(mock_svc, "start_server", boom)
+        code, out = _run(["mock"])
+        assert code == 1
+        assert "未预期" in out
+
+    def test_参数透传(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        captured: dict = {}
+
+        def fake_start(config):
+            captured["host"] = config.host
+            captured["port"] = config.port
+            captured["ttft"] = config.ttft_ms
+            captured["tpot"] = config.tpot_ms
+            captured["tokens"] = config.tokens
+            captured["model"] = config.model
+
+        monkeypatch.setattr(mock_svc, "start_server", fake_start)
+        code, _ = _run(
+            [
+                "mock",
+                "-H",
+                "0.0.0.0",
+                "-p",
+                "12345",
+                "--ttft",
+                "100",
+                "--tpot",
+                "3",
+                "-n",
+                "32",
+                "--model",
+                "fake-mock",
+            ]
+        )
+        assert code == 0
+        assert captured == {
+            "host": "0.0.0.0",
+            "port": 12345,
+            "ttft": 100,
+            "tpot": 3,
+            "tokens": 32,
+            "model": "fake-mock",
+        }
+
+    def test_启动后打印_curl_示例(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """启动横幅里必须给出可复制的 curl 命令"""
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        monkeypatch.setattr(mock_svc, "start_server", lambda c: None)
+        code, out = _run(["mock", "-p", "8123", "--model", "my-mock"])
+        assert code == 0
+        assert "curl" in out
+        assert "http://127.0.0.1:8123/v1/chat/completions" in out
+        assert '"stream":true' in out
+        assert '"model":"my-mock"' in out
+        assert "Content-Type: application/json" in out
+
+    def test_0000_host_curl_改用_127001(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """host=0.0.0.0 时 curl 示例应替换为 127.0.0.1，方便直接复制"""
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        monkeypatch.setattr(mock_svc, "start_server", lambda c: None)
+        code, out = _run(["mock", "-H", "0.0.0.0", "-p", "9000"])
+        assert code == 0
+        # 服务地址仍按真实监听地址展示
+        assert "http://0.0.0.0:9000" in out
+        # curl 行不能含 0.0.0.0（除非作为 host）
+        curl_lines = [line for line in out.splitlines() if "curl" in line]
+        assert curl_lines
+        assert "127.0.0.1:9000" in "\n".join(curl_lines)
+        assert "0.0.0.0:9000" not in "\n".join(curl_lines)
+
+    def test_port_越界_click_拒绝(self) -> None:
+        code, out = _run(["mock", "-p", "99999"])
+        assert code != 0
+        assert "65535" in out or "range" in out.lower() or "Invalid" in out
+
+    def test_tokens_零_click_拒绝(self) -> None:
+        code, out = _run(["mock", "-n", "0"])
+        assert code != 0
+
+    def test_chunk_max_小于_min_pydantic_拒绝(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """chunk-min/chunk-max 单独都合法，但组合非法时由 pydantic 抛错并被 mock_command 捕获"""
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        called: dict = {}
+        monkeypatch.setattr(mock_svc, "start_server", lambda c: called.setdefault("ok", True))
+        code, out = _run(["mock", "--chunk-min", "5", "--chunk-max", "3"])
+        # MockServerConfig 校验失败 → 未预期错误
+        assert code != 0
+        assert "ok" not in called  # start_server 不应被调用
+
+    def test_config_文件加载(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """-c <file> 应能加载配置，并把 host/port/规则等都覆盖掉 CLI 默认"""
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        cfg_path = tmp_path / "mock.json"
+        cfg_path.write_text(
+            '{"host":"127.0.0.1","port":12321,"model":"loaded",'
+            '"default":{"ttft_ms":100,"tpot_ms":5,"tokens":7},'
+            '"rules":[{"name":"r","match":{"model":"x"},"tokens":99}]}',
+            encoding="utf-8",
+        )
+        captured: dict = {}
+        monkeypatch.setattr(
+            mock_svc, "start_server",
+            lambda c: captured.update({"cfg": c}),
+        )
+        code, out = _run(["mock", "-c", str(cfg_path)])
+        assert code == 0
+        cfg = captured["cfg"]
+        assert cfg.port == 12321
+        assert cfg.model == "loaded"
+        assert cfg.ttft_ms == 100
+        assert len(cfg.rules) == 1
+        assert cfg.rules[0].tokens == 99
+        # 横幅应展示配置文件路径与规则数量
+        assert "配置文件" in out
+        assert "规则: " in out and "1" in out
+
+    def test_config_文件不存在_click_拒绝(self) -> None:
+        code, out = _run(["mock", "-c", "/no/such/file"])
+        # click.Path(exists=True) 在解析阶段就报错
+        assert code != 0
+
+    def test_config_非法_JSON(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        bad = tmp_path / "bad.json"
+        bad.write_text("not json", encoding="utf-8")
+        called: dict = {}
+        monkeypatch.setattr(mock_svc, "start_server", lambda c: called.setdefault("ok", True))
+        code, out = _run(["mock", "-c", str(bad)])
+        # ValidationError exit_code=6
+        assert code == 6
+        assert "ok" not in called
+
+
+class TestMockConfigCommand:
+    """qxw-llm mock-config 子命令"""
+
+    def test_stdout_输出_合法_JSON(self) -> None:
+        code, out = _run(["mock-config"])
+        assert code == 0
+        # 输出可被 json.loads
+        import json as _json
+        data = _json.loads(out)
+        assert "default" in data
+        assert "rules" in data and len(data["rules"]) >= 3
+
+    def test_输出文件_写入(self, tmp_path: Path) -> None:
+        out_file = tmp_path / "x.json"
+        code, out = _run(["mock-config", "-o", str(out_file)])
+        assert code == 0
+        assert out_file.exists()
+        # 写出内容与 stdout 一致
+        code2, stdout_out = _run(["mock-config"])
+        assert out_file.read_text(encoding="utf-8") == stdout_out.rstrip("\n") + "\n" \
+            or out_file.read_text(encoding="utf-8") == stdout_out
+
+    def test_文件已存在_拒绝(self, tmp_path: Path) -> None:
+        out_file = tmp_path / "x.json"
+        out_file.write_text("placeholder", encoding="utf-8")
+        code, out = _run(["mock-config", "-o", str(out_file)])
+        assert code == 1
+        assert "已存在" in out
+        # 没被覆盖
+        assert out_file.read_text(encoding="utf-8") == "placeholder"
+
+    def test_force_覆盖(self, tmp_path: Path) -> None:
+        out_file = tmp_path / "x.json"
+        out_file.write_text("placeholder", encoding="utf-8")
+        code, _ = _run(["mock-config", "-o", str(out_file), "-f"])
+        assert code == 0
+        assert "placeholder" not in out_file.read_text(encoding="utf-8")
+        assert '"default"' in out_file.read_text(encoding="utf-8")
+
+    def test_QxwError_透传(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from qxw.library.services import llm_mock_service as mock_svc
+
+        def boom() -> str:
+            raise QxwError("无内置示例", exit_code=6)
+
+        monkeypatch.setattr(mock_svc, "read_example_config", boom)
+        code, out = _run(["mock-config"])
+        assert code == 6
+        assert "无内置示例" in out
+
+    def test_写入失败_OSError(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from pathlib import Path as _P
+        # 用一个不可写的路径模拟写失败：父目录不存在
+        bad_path = tmp_path / "no_such_dir" / "x.json"
+        code, out = _run(["mock-config", "-o", str(bad_path)])
+        assert code == 1
+        assert "写入失败" in out
+
+
+class TestFetchCommandRevisionDefault:
     def test_revision_缺省_为_None(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         """命令行不显式指定 --revision 时，应以 None 透传给 service 让 SDK 用各自默认值"""
         from qxw.library.services import llm_fetch_service as svc
