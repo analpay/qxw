@@ -23,7 +23,7 @@
 | `qxw-serve` | 🌐 HTTP 服务集合（gitbook / webtool / file-web / image-web） | ✅ 可用 |
 | `qxw-image` | 📷 图片工具集（RAW 批量转换 / SVG 转 PNG / 调色滤镜 / 自动亮度对比饱和调整 / 元数据擦除） | ✅ 可用 |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） | ✅ 可用 |
-| `qxw-str` | 🔤 字符串工具集（长度统计等） | ✅ 可用 |
+| `qxw-str` | 🔤 字符串工具集（长度统计 / AES-256-GCM 加解密） | ✅ 可用 |
 | `qxw-math` | 🧮 字符串数学表达式计算（四则 / 次方 / 开方） | ✅ 可用 |
 | `qxw-git` | 📦 git 仓库工具集（archive 打包 tar/zip，剔除 .git，自动 LFS pull） | ✅ 可用 |
 
@@ -93,7 +93,7 @@ qxw <子命令> --help  # 查看子命令详细帮助
 │ qxw-llm           │ QXW AI 对话工具集合 - 对话 / 提供商管理   │
 │ qxw-markdown      │ QXW Markdown 工具集                      │
 │ qxw-serve         │ QXW HTTP 服务集合                        │
-│ qxw-str           │ QXW 字符串工具集（长度统计等）            │
+│ qxw-str           │ QXW 字符串工具集（长度统计 / 加解密）      │
 │ qxw-math          │ QXW 数学表达式计算器                      │
 └───────────────────┴────────────────────────────────────────┘
 ```
@@ -1447,7 +1447,7 @@ source "/Users/you/.config/qxw/completions/qxw.zsh"
 
 ## qxw-str
 
-字符串工具集。目前提供 `len` 子命令，用于统计输入字符串的长度（字符数 / UTF-8 字节数）。
+字符串工具集。提供 `len` / `encrypt` / `decrypt` 子命令，分别用于统计字符串长度与 AES-256-GCM 对称加解密。
 
 ### 基本用法
 
@@ -1468,6 +1468,8 @@ cat README.md | qxw-str len
 | 子命令 | 说明 |
 |--------|------|
 | `len` | 统计输入字符串的字符数（Unicode 码点）与 UTF-8 字节数 |
+| `encrypt` | 使用 AES-256-GCM 加密字符串，输出 base64 密文 |
+| `decrypt` | 使用 AES-256-GCM 解密 base64 密文，还原明文 |
 
 ### len 参数说明
 
@@ -1509,6 +1511,119 @@ echo "占用 $BYTES 字节"   # 占用 12 字节
 
 - **字符数**：Python `len(str)`，按 Unicode 码点计算。一个中文汉字计 1，常见 emoji 计 1（但组合 emoji 如 👨‍👩‍👧‍👦 会被拆成多个码点）
 - **UTF-8 字节数**：`str.encode("utf-8")` 后的字节长度。ASCII 字符 1 字节、中文 3 字节、大部分 emoji 4 字节
+
+### encrypt 加密
+
+使用 AES-256-GCM 对称加密，输出单行 base64 密文。
+
+```bash
+# 表格输出
+qxw-str encrypt "hello"
+
+# 仅输出密文，便于脚本捕获
+qxw-str encrypt "secret" -q
+
+# 从 stdin 读取
+echo "hello" | qxw-str encrypt -q
+
+# 显式指定密钥
+qxw-str encrypt "x" -k "mykey" -q
+```
+
+#### encrypt 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `<text>` | - | - | 要加密的明文（位置参数，可选；缺省时从 stdin 读取） |
+| `--quiet` | `-q` | false | 仅输出密文（单行 base64），便于脚本 `$(...)` 捕获 |
+| `--key` | `-k` | None | 显式指定加密密钥；缺省读取环境变量，再缺省回退 `"sbdqf"` |
+| `--help` | - | - | 显示帮助信息 |
+
+#### 密钥来源（按优先级）
+
+1. `--key` 参数显式传入
+2. 环境变量 `QXW_STR_ENCRYPT_KEY`
+3. 默认值 `"sbdqf"`
+
+用户传入的任意长度密钥都会经 SHA-256 派生为 32 字节 AES-256 密钥，因此短密钥（如 `"sbdqf"`）也能安全使用。
+
+#### 算法与密文格式
+
+- 算法：**AES-256-GCM**（带认证标签的对称加密）
+- 密文格式：`base64(nonce || ciphertext || tag)`
+  - `nonce`：12 字节随机数
+  - `ciphertext`：与明文等长的密文
+  - `tag`：16 字节认证标签
+- 每次加密使用随机 nonce，因此**同一明文多次加密会得到不同密文**
+- 密文可直接传给 `qxw-str decrypt` 还原，无需单独保存 nonce
+
+#### 脚本场景
+
+```bash
+# 加密并捕获密文
+export QXW_STR_ENCRYPT_KEY="my-secret-key"
+CT=$(qxw-str encrypt -q "secret")
+echo "$CT"                          # 一行 base64 密文
+
+# 用环境变量指定密钥后批量加密
+qxw-str encrypt "data1" -q
+qxw-str encrypt "data2" -q
+```
+
+### decrypt 解密
+
+使用 AES-256-GCM 解密 `encrypt` 产出的 base64 密文，还原明文。
+
+```bash
+# 表格输出明文
+qxw-str decrypt "$CT"
+
+# 仅输出明文
+qxw-str decrypt "$CT" -q
+
+# 显式指定密钥（须与加密时一致）
+qxw-str decrypt "$CT" -k "mykey" -q
+
+# 从 stdin 读取
+echo "$CT" | qxw-str decrypt -q
+```
+
+#### decrypt 参数说明
+
+| 参数 | 缩写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `<text>` | - | - | 要解密的密文（位置参数，可选；缺省时从 stdin 读取） |
+| `--quiet` | `-q` | false | 仅输出明文，便于脚本 `$(...)` 捕获 |
+| `--key` | `-k` | None | 显式指定解密密钥；缺省读取环境变量，再缺省回退 `"sbdqf"` |
+| `--help` | - | - | 显示帮助信息 |
+
+密钥来源与 `encrypt` 一致。**解密时密钥必须与加密时一致**，否则会因 GCM 认证标签校验失败而报错。
+
+### 加解密往返示例
+
+```bash
+CT=$(qxw-str encrypt -q "hello")
+PT=$(qxw-str decrypt -q "$CT")
+echo "$PT"                          # hello
+```
+
+### 退出码
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 成功 |
+| 1 | 未预期的错误 |
+| 2 | 参数缺失 / 参数冲突 / 未提供输入且非 stdin |
+| 6 | 校验错误（解密失败、密钥不匹配、密文非法、密文被篡改、密文为空等） |
+| 130 | 用户 Ctrl-C 中断 |
+
+### 常见踩坑
+
+- **解密报"密钥不匹配或密文已被篡改"**：加密与解密使用的密钥不一致。检查 `-k` 参数或 `QXW_STR_ENCRYPT_KEY` 环境变量是否一致。
+- **解密报"密文不是合法的 base64"**：密文在复制粘贴时被截断或混入了非法字符。
+- **解密报"密文长度不足"**：密文至少需要 28 字节（12 nonce + 16 tag），过短说明密文不完整。
+- **加密后无法用环境变量密钥解密**：加密时用了默认密钥 `"sbdqf"`，但解密时设置了不同的 `QXW_STR_ENCRYPT_KEY`。两边保持一致即可。
+- **同一明文每次加密结果不同**：这是 AES-GCM 随机 nonce 的正常行为，不是 bug。
 
 ## qxw-math
 

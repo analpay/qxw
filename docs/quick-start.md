@@ -286,6 +286,20 @@ cat README.md | qxw-str len
 # 纯数字输出，方便脚本捕获
 LEN=$(qxw-str len -q "你好世界")      # 字符数
 BYTES=$(qxw-str len -b "你好世界")    # UTF-8 字节数
+
+# AES-256-GCM 加密 / 解密（密钥默认 "sbdqf"，或用环境变量 QXW_STR_ENCRYPT_KEY）
+qxw-str encrypt "secret" -q          # 输出单行 base64 密文
+qxw-str decrypt "base64密文" -q       # 解密还原明文
+
+# 往返示例
+CT=$(qxw-str encrypt -q "hello")
+PT=$(qxw-str decrypt -q "$CT")
+echo "$PT"                           # hello
+
+# 自定义密钥：环境变量或 -k 参数
+export QXW_STR_ENCRYPT_KEY="my-key"
+qxw-str encrypt "data" -q
+qxw-str encrypt "data" -k "another-key" -q
 ```
 
 ## 12. 数学表达式计算

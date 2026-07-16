@@ -68,6 +68,7 @@ out/
 .settings/
 *.sublime-project
 *.sublime-workspace
+.omo/
 
 # ========================================
 # 操作系统

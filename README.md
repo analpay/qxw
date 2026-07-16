@@ -81,7 +81,7 @@ qxw hello --name 开发者
 | `qxw-serve` | 🌐 HTTP 服务集合（gitbook 预览 / 开发者工具 / 文件共享 / 图片画廊） |
 | `qxw-image` | 📷 图片工具集（RAW 批量转 JPG / SVG 转 PNG / 调色滤镜 / 自动亮度对比饱和调整 / 元数据擦除） |
 | `qxw-markdown` | 📝 Markdown 工具集（PlantUML 渲染 / 公众号适配 / AI 封面生成 / SUMMARY 生成） |
-| `qxw-str` | 🔤 字符串工具集（长度统计等） |
+| `qxw-str` | 🔤 字符串工具集（长度统计 / AES-256-GCM 加解密） |
 | `qxw-math` | 🧮 字符串数学表达式计算（四则 / 次方 / 开方） |
 | `qxw-git` | 📦 git 仓库工具集（archive 打包 tar/zip，剔除 .git，自动 LFS pull） |
 

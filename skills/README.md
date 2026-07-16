@@ -11,7 +11,7 @@ skills/
 ├── qxw-serve/SKILL.md    # gitbook / webtool / file-web / image-web HTTP 服务
 ├── qxw-image/SKILL.md    # raw / svg / filter / change / clear 图片处理
 ├── qxw-markdown/SKILL.md # wx / cover / summary Markdown 工具
-├── qxw-str/SKILL.md      # 字符串长度统计
+├── qxw-str/SKILL.md      # 字符串长度统计 / AES-256-GCM 加解密
 ├── qxw-math/SKILL.md     # 安全的数学表达式计算
 └── qxw-git/SKILL.md      # git 仓库打包（含 LFS 实体化）
 ```
@@ -25,7 +25,7 @@ skills/
 | `qxw-serve` | `qxw-serve gitbook / webtool / file-web / image-web` | 本地预览 Markdown、开发者 Web 工具集、文件共享、图片画廊 |
 | `qxw-image` | `qxw-image raw / svg / filter / change / clear` | RAW 转 JPG、SVG 转 PNG、调色滤镜、自动亮度对比饱和、擦除元数据 |
 | `qxw-markdown` | `qxw-markdown wx / cover / summary` | PlantUML 渲染 + 公众号适配、Gemini 生成封面、Gitbook 目录树 |
-| `qxw-str` | `qxw-str len` | 字符数 / UTF-8 字节数统计 |
+| `qxw-str` | `qxw-str len / encrypt / decrypt` | 字符数 / UTF-8 字节数统计 / AES-256-GCM 加解密 |
 | `qxw-math` | `qxw-math` | 终端安全求值（不用 `eval`） |
 | `qxw-git` | `qxw-git archive` | git 仓库打包（不含 .git，自动 LFS pull） |
 
